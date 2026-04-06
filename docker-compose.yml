@@ -1,0 +1,36 @@
+services:
+  donna-app:
+    build:
+      context: ./backend
+      dockerfile: ../Dockerfile
+    ports:
+      - "8000:8000"
+    volumes:
+      - ./data:/app/data
+    env_file:
+      - .env
+    depends_on:
+      chroma:
+        condition: service_started
+    restart: unless-stopped
+
+  donna-ui:
+    build: ./frontend
+    ports:
+      - "3000:3000"
+    environment:
+      - NEXT_PUBLIC_API_URL=http://localhost:8000
+    depends_on:
+      - donna-app
+    restart: unless-stopped
+
+  chroma:
+    image: chromadb/chroma:0.5.5
+    ports:
+      - "8001:8000"
+    volumes:
+      - chroma_data:/chroma/chroma
+    restart: unless-stopped
+
+volumes:
+  chroma_data:
