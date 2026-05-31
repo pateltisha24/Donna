@@ -5,14 +5,26 @@ Each node receives the graph State, does work (LLM calls, DB reads/writes),
 and returns a dict with state updates.
 """
 
-import json
+import logging
 import os
-import re
 from datetime import datetime
-from typing import Any
+from typing import Callable
 
 from groq import Groq
 
+from agent.calendar_events import build_events
+from agent.parsing import (
+    ALLOWED_PROFILE_FIELDS,
+    ParseResult,
+    extract_block,
+    find_ids,
+    has_token,
+    loads_loose,
+    parse_events,
+    parse_profile_update,
+    parse_tasks,
+    strip_block,
+)
 from agent.prompts import (
     BASE_SYSTEM,
     CLASSIFY_INTENT_SYSTEM,
@@ -22,9 +34,11 @@ from agent.prompts import (
 )
 from memory.chroma_store import ChromaStore
 from memory.sqlite_store import SqliteStore
-from models.task import Priority, Task, TaskStatus
+from models.task import Priority, Recurrence, Task, TaskStatus
 from models.user_profile import UserProfile
 from utils.time_utils import today_str, tomorrow_str
+
+logger = logging.getLogger("donna.nodes")
 
 # ---------------------------------------------------------------------------
 # Groq client
@@ -33,14 +47,44 @@ from utils.time_utils import today_str, tomorrow_str
 _groq_client = Groq(api_key=os.environ.get("GROQ_API_KEY", ""))
 
 
-def call_llm(messages: list[dict], system_prompt: str, temperature: float = 0.7) -> str:
-    response = _groq_client.chat.completions.create(
+def call_llm(
+    messages: list[dict],
+    system_prompt: str,
+    temperature: float = 0.7,
+    on_delta: Callable[[str], None] | None = None,
+) -> str:
+    """
+    Call the LLM and return the full response text.
+
+    When `on_delta` is provided, the response is streamed and each content delta
+    is passed to the callback as it arrives (real time-to-first-token). The full
+    text is still accumulated and returned so callers can parse control tokens.
+    """
+    full_messages = [{"role": "system", "content": system_prompt}] + messages
+
+    if on_delta is None:
+        response = _groq_client.chat.completions.create(
+            model="llama-3.3-70b-versatile",
+            messages=full_messages,
+            temperature=temperature,
+            max_tokens=1024,
+        )
+        return response.choices[0].message.content
+
+    chunks: list[str] = []
+    stream = _groq_client.chat.completions.create(
         model="llama-3.3-70b-versatile",
-        messages=[{"role": "system", "content": system_prompt}] + messages,
+        messages=full_messages,
         temperature=temperature,
         max_tokens=1024,
+        stream=True,
     )
-    return response.choices[0].message.content
+    for event in stream:
+        delta = event.choices[0].delta.content or ""
+        if delta:
+            chunks.append(delta)
+            on_delta(delta)
+    return "".join(chunks)
 
 
 # ---------------------------------------------------------------------------
@@ -66,14 +110,73 @@ def get_chroma() -> ChromaStore:
 
 
 # ---------------------------------------------------------------------------
-# Helper: extract JSON blocks from LLM output
+# Helpers: build tasks + recover malformed control blocks via one retry
 # ---------------------------------------------------------------------------
 
-def _extract_block(text: str, tag: str) -> str | None:
-    """Extract content between <TAG> ... </TAG>."""
-    pattern = rf"<{tag}>(.*?)</{tag}>"
-    m = re.search(pattern, text, re.DOTALL)
-    return m.group(1).strip() if m else None
+def _build_task(td: dict) -> Task:
+    """Construct a Task from a validated task dict (title guaranteed present)."""
+    deadline = None
+    if td.get("deadline"):
+        try:
+            deadline = datetime.fromisoformat(td["deadline"])
+        except (ValueError, TypeError):
+            deadline = None
+
+    try:
+        priority = Priority(str(td.get("priority", "medium")).lower())
+    except ValueError:
+        priority = Priority.MEDIUM
+
+    try:
+        recurrence = Recurrence(str(td.get("recurrence", "none")).lower())
+    except ValueError:
+        recurrence = Recurrence.NONE
+
+    recurrence_days = td.get("recurrence_days") or []
+    if not isinstance(recurrence_days, list):
+        recurrence_days = []
+
+    # A recurring template starts generating from its start date; default to
+    # today so it can fire immediately. One-off tasks default to tomorrow.
+    default_date = today_str() if recurrence != Recurrence.NONE else tomorrow_str()
+
+    return Task(
+        title=str(td["title"]).strip(),
+        date_assigned=td.get("date_assigned") or default_date,
+        deadline=deadline,
+        duration_estimate=td.get("duration_estimate"),
+        priority=priority,
+        recurrence=recurrence,
+        recurrence_days=[str(x).lower()[:3] for x in recurrence_days],
+    )
+
+
+def _retry_for_block(
+    history: list[dict],
+    system: str,
+    tag: str,
+    parser: Callable[[str], ParseResult],
+) -> ParseResult:
+    """
+    Ask the model once more to re-emit a valid control block, then re-parse.
+    Used only after an initial parse failed. The conversational reply shown to
+    the user is unchanged — this silently recovers just the structured payload.
+    """
+    corrective = (
+        system
+        + f"\n\nIMPORTANT: your previous <{tag}> block could not be parsed. "
+        f"Reply with ONLY a single <{tag}>...</{tag}> block containing strictly "
+        "valid JSON (double-quoted keys/strings, no trailing commas, no prose)."
+    )
+    try:
+        retry_resp = call_llm(history, corrective, temperature=0.1)
+    except Exception as e:  # network/LLM failure
+        return ParseResult(False, error=f"retry call failed: {e}")
+
+    block = extract_block(retry_resp, tag)
+    if block is None:
+        return ParseResult(False, error="retry produced no block")
+    return parser(block)
 
 
 # ---------------------------------------------------------------------------
@@ -112,11 +215,11 @@ def onboarding(state: dict) -> dict:
     if user_msg:
         history = history + [{"role": "user", "content": user_msg}]
 
-    response = call_llm(history, system)
+    response = call_llm(history, system, on_delta=state.get("stream_cb"))
 
     # Check if onboarding is complete
-    if "<ONBOARDING_COMPLETE>" in response:
-        response_clean = response.replace("<ONBOARDING_COMPLETE>", "").strip()
+    if has_token(response, "<ONBOARDING_COMPLETE>"):
+        response_clean = strip_block(response, "ONBOARDING_COMPLETE")
         # Extract whatever profile info we can from the conversation
         _save_profile_from_conversation(history + [{"role": "assistant", "content": response_clean}], profile)
         sqlite.complete_onboarding()
@@ -150,13 +253,12 @@ Respond with ONLY the JSON object, no explanation.\
 """
     try:
         raw = call_llm(history, extraction_prompt, temperature=0.2)
-        # Strip markdown code fences if present
-        raw = re.sub(r"```(?:json)?", "", raw).strip().rstrip("`").strip()
-        data = json.loads(raw)
-        profile = UserProfile.from_dict({**existing_profile.to_dict(), **data})
-        chroma.save_profile(profile)
-    except Exception:
-        pass  # Best-effort — don't crash onboarding on extraction failure
+        data = loads_loose(raw)
+        if isinstance(data, dict):
+            profile = UserProfile.from_dict({**existing_profile.to_dict(), **data})
+            chroma.save_profile(profile)
+    except Exception as e:
+        logger.warning("onboarding profile extraction failed: %s", e)
 
 
 # ---------------------------------------------------------------------------
@@ -178,7 +280,7 @@ def classify_intent(state: dict) -> dict:
     valid = {
         "morning_briefing", "task_input", "task_update",
         "emergency_replan", "general_checkin", "profile_update",
-        "eod_wrap", "onboarding",
+        "eod_wrap", "calendar", "onboarding",
     }
     if intent not in valid:
         intent = "general_checkin"
@@ -195,16 +297,17 @@ def morning_briefing(state: dict) -> dict:
     sqlite = get_sqlite()
     profile = chroma.get_profile()
     tasks = sqlite.get_tasks_for_date(today_str())
+    events = sqlite.get_events_for_date(today_str())
 
     from agent.prompts import MORNING_BRIEFING_EXTRA
-    system = build_system_prompt(profile, tasks, extra=MORNING_BRIEFING_EXTRA)
+    system = build_system_prompt(profile, tasks, extra=MORNING_BRIEFING_EXTRA, todays_events=events)
 
     history = state.get("history", [])
     user_msg = state.get("user_message", "")
     if user_msg:
         history = history + [{"role": "user", "content": user_msg}]
 
-    response = call_llm(history, system)
+    response = call_llm(history, system, on_delta=state.get("stream_cb"))
 
     return {
         "response": response,
@@ -231,52 +334,38 @@ def task_input(state: dict) -> dict:
     if user_msg:
         history = history + [{"role": "user", "content": user_msg}]
 
-    response = call_llm(history, system)
+    response = call_llm(history, system, on_delta=state.get("stream_cb"))
 
-    # Check if tasks were confirmed
-    tasks_json_str = _extract_block(response, "TASKS_CONFIRMED")
-    if tasks_json_str:
-        response_clean = re.sub(
-            r"<TASKS_CONFIRMED>.*?</TASKS_CONFIRMED>", "", response, flags=re.DOTALL
-        ).strip()
-        try:
-            tasks_data = json.loads(tasks_json_str)
-            for td in tasks_data:
-                # Determine date_assigned
-                date_assigned = td.get("date_assigned", tomorrow_str())
-                # Parse deadline
-                deadline = None
-                if td.get("deadline"):
-                    try:
-                        deadline = datetime.fromisoformat(td["deadline"])
-                    except ValueError:
-                        pass
-                priority_str = td.get("priority", "medium").lower()
+    # A TASKS_CONFIRMED block is only present once the user has confirmed.
+    block = extract_block(response, "TASKS_CONFIRMED")
+    response_clean = strip_block(response, "TASKS_CONFIRMED")
+
+    if block is not None:
+        result = parse_tasks(block)
+        if not result.ok:
+            logger.warning("task_input: TASKS_CONFIRMED parse failed (%s); retrying", result.error)
+            result = _retry_for_block(
+                history + [{"role": "assistant", "content": response}],
+                system, "TASKS_CONFIRMED", parse_tasks,
+            )
+
+        if result.ok:
+            saved = 0
+            for td in result.value:
                 try:
-                    priority = Priority(priority_str)
-                except ValueError:
-                    priority = Priority.MEDIUM
-
-                task = Task(
-                    title=td["title"],
-                    date_assigned=date_assigned,
-                    deadline=deadline,
-                    duration_estimate=td.get("duration_estimate"),
-                    priority=priority,
-                )
-                sqlite.add_task(task)
-        except Exception:
-            pass  # Best-effort
-
-        return {
-            "response": response_clean,
-            "history": history + [{"role": "assistant", "content": response_clean}],
-            "next_node": "end",
-        }
+                    sqlite.add_task(_build_task(td))
+                    saved += 1
+                except Exception as e:
+                    logger.warning("task_input: could not save task %r: %s", td, e)
+            if saved == 0:
+                response_clean += "\n\nI had trouble saving those — could you list them again?"
+        else:
+            logger.error("task_input: giving up on TASKS_CONFIRMED (%s)", result.error)
+            response_clean += "\n\nI couldn't save that cleanly — could you list the tasks again?"
 
     return {
-        "response": response,
-        "history": history + [{"role": "assistant", "content": response}],
+        "response": response_clean,
+        "history": history + [{"role": "assistant", "content": response_clean}],
         "next_node": "end",
     }
 
@@ -308,25 +397,23 @@ def task_update(state: dict) -> dict:
     if user_msg:
         history = history + [{"role": "user", "content": user_msg}]
 
-    response = call_llm(history, system)
+    response = call_llm(history, system, on_delta=state.get("stream_cb"))
 
     # Process any task mutations
-    for match in re.finditer(r"<MARK_DONE>(\d+)</MARK_DONE>", response):
-        task_id = int(match.group(1))
+    for task_id in find_ids(response, "MARK_DONE"):
         try:
             sqlite.mark_done(task_id)
-        except Exception:
-            pass
+        except Exception as e:
+            logger.warning("task_update: mark_done(%s) failed: %s", task_id, e)
 
-    for match in re.finditer(r"<MOVE_TASK>(\d+)</MOVE_TASK>", response):
-        task_id = int(match.group(1))
+    for task_id in find_ids(response, "MOVE_TASK"):
         try:
             sqlite.move_task(task_id, tomorrow_str())
-        except Exception:
-            pass
+        except Exception as e:
+            logger.warning("task_update: move_task(%s) failed: %s", task_id, e)
 
     # Strip control tokens from response
-    response_clean = re.sub(r"<(?:MARK_DONE|MOVE_TASK)>\d+</(?:MARK_DONE|MOVE_TASK)>", "", response).strip()
+    response_clean = strip_block(strip_block(response, "MARK_DONE"), "MOVE_TASK")
 
     return {
         "response": response_clean,
@@ -353,7 +440,7 @@ def emergency_replan(state: dict) -> dict:
     if user_msg:
         history = history + [{"role": "user", "content": user_msg}]
 
-    response = call_llm(history, system)
+    response = call_llm(history, system, on_delta=state.get("stream_cb"))
 
     return {
         "response": response,
@@ -371,16 +458,17 @@ def general_checkin(state: dict) -> dict:
     sqlite = get_sqlite()
     profile = chroma.get_profile()
     tasks = sqlite.get_tasks_for_date(today_str())
+    events = sqlite.get_events_for_date(today_str())
 
     from agent.prompts import GENERAL_CHECKIN_EXTRA
-    system = build_system_prompt(profile, tasks, extra=GENERAL_CHECKIN_EXTRA)
+    system = build_system_prompt(profile, tasks, extra=GENERAL_CHECKIN_EXTRA, todays_events=events)
 
     history = state.get("history", [])
     user_msg = state.get("user_message", "")
     if user_msg:
         history = history + [{"role": "user", "content": user_msg}]
 
-    response = call_llm(history, system)
+    response = call_llm(history, system, on_delta=state.get("stream_cb"))
 
     return {
         "response": response,
@@ -407,27 +495,97 @@ def profile_update(state: dict) -> dict:
     if user_msg:
         history = history + [{"role": "user", "content": user_msg}]
 
-    response = call_llm(history, system)
+    response = call_llm(history, system, on_delta=state.get("stream_cb"))
 
     # Extract and apply profile updates
-    update_json_str = _extract_block(response, "PROFILE_UPDATE")
-    if update_json_str:
-        try:
-            update_data = json.loads(update_json_str)
-            chroma.update_profile_fields(**update_data)
-        except Exception:
-            pass
+    block = extract_block(response, "PROFILE_UPDATE")
+    response_clean = strip_block(response, "PROFILE_UPDATE")
 
-    # Strip the control token from the response
-    response_clean = re.sub(
-        r"<PROFILE_UPDATE>.*?</PROFILE_UPDATE>", "", response, flags=re.DOTALL
-    ).strip()
+    if block is not None:
+        result = parse_profile_update(block)
+        if not result.ok:
+            logger.warning("profile_update: parse failed (%s); retrying", result.error)
+            result = _retry_for_block(
+                history + [{"role": "assistant", "content": response}],
+                system, "PROFILE_UPDATE", parse_profile_update,
+            )
+        if result.ok and result.value:
+            try:
+                chroma.update_profile_fields(**result.value)
+            except Exception as e:
+                logger.warning("profile_update: save failed: %s", e)
+        elif not result.ok:
+            logger.warning("profile_update: gave up on PROFILE_UPDATE (%s)", result.error)
 
     return {
         "response": response_clean,
         "history": history + [{"role": "assistant", "content": response_clean}],
         "next_node": "end",
     }
+
+
+# ---------------------------------------------------------------------------
+# Node: calendar  (create timed events from chat)
+# ---------------------------------------------------------------------------
+
+def calendar(state: dict) -> dict:
+    chroma = get_chroma()
+    sqlite = get_sqlite()
+    profile = chroma.get_profile()
+    tasks = sqlite.get_tasks_for_date(today_str())
+    events = sqlite.get_events_for_date(today_str())
+
+    from agent.prompts import CALENDAR_EXTRA
+    system = build_system_prompt(profile, tasks, extra=CALENDAR_EXTRA, todays_events=events)
+
+    history = state.get("history", [])
+    user_msg = state.get("user_message", "")
+    if user_msg:
+        history = history + [{"role": "user", "content": user_msg}]
+
+    response = call_llm(history, system, on_delta=state.get("stream_cb"))
+
+    block = extract_block(response, "EVENTS_CONFIRMED")
+    response_clean = strip_block(response, "EVENTS_CONFIRMED")
+
+    if block is not None:
+        result = parse_events(block)
+        if not result.ok:
+            logger.warning("calendar: EVENTS_CONFIRMED parse failed (%s); retrying", result.error)
+            result = _retry_for_block(
+                history + [{"role": "assistant", "content": response}],
+                system, "EVENTS_CONFIRMED", parse_events,
+            )
+        if result.ok:
+            saved = 0
+            for ev in build_events(result.value):
+                try:
+                    sqlite.add_event(ev)
+                    saved += 1
+                except Exception as e:
+                    logger.warning("calendar: could not save event: %s", e)
+            if saved:
+                _reschedule_reminders()
+            else:
+                response_clean += "\n\nI had trouble saving those — could you restate them?"
+        else:
+            logger.error("calendar: giving up on EVENTS_CONFIRMED (%s)", result.error)
+            response_clean += "\n\nI couldn't add that cleanly — could you restate the event?"
+
+    return {
+        "response": response_clean,
+        "history": history + [{"role": "assistant", "content": response_clean}],
+        "next_node": "end",
+    }
+
+
+def _reschedule_reminders() -> None:
+    """Rebuild event reminder jobs after a calendar change (best-effort)."""
+    try:
+        from scheduler.jobs import reschedule_event_reminders
+        reschedule_event_reminders()
+    except Exception as e:  # scheduler may not be running (e.g. in tests)
+        logger.debug("reschedule reminders skipped: %s", e)
 
 
 # ---------------------------------------------------------------------------
@@ -467,7 +625,7 @@ def eod_wrap(state: dict) -> dict:
     if user_msg:
         history = history + [{"role": "user", "content": user_msg}]
 
-    response = call_llm(history, system)
+    response = call_llm(history, system, on_delta=state.get("stream_cb"))
 
     return {
         "response": response,
@@ -480,21 +638,42 @@ def eod_wrap(state: dict) -> dict:
 # Node: update_memory  (post-response memory extraction)
 # ---------------------------------------------------------------------------
 
+# Cheap signals that a user message might contain new personal info worth
+# extracting. If none are present we skip the extraction LLM call entirely,
+# which is the common case ("what's next?", "mark that done", "thanks").
+_MEMORY_CUES = (
+    "i'm", "i am", "im ", "my ", "i work", "i live", "i study", "i go to",
+    "i prefer", "i like", "i love", "i hate", "i usually", "i tend", "i always",
+    "i never", "call me", "my name", "i go by", "i have a", "based in",
+    "remember that", "fyi", "by the way", "just so you know",
+)
+
+
+def _might_have_personal_info(text: str) -> bool:
+    t = text.lower()
+    return any(cue in t for cue in _MEMORY_CUES)
+
+
 def update_memory(state: dict) -> dict:
     """
-    After any response, opportunistically extract new user info and persist it.
-    This node is lightweight — any failure is silently swallowed.
+    After a response, opportunistically extract new user info and persist it.
+    Gated by a cheap heuristic so we don't fire a second LLM call on every
+    turn — only when the user message plausibly contains something to learn.
     """
     intent = state.get("intent", "")
-    # We only do post-response memory extraction for conversational intents
-    if intent in ("profile_update", "onboarding", "eod_wrap"):
+    # These intents already handle their own writes / aren't about the user.
+    if intent in ("profile_update", "onboarding", "eod_wrap", "calendar"):
         return {"response": state.get("response", "")}
 
-    chroma = get_chroma()
     history = state.get("history", [])
     if len(history) < 2:
         return {"response": state.get("response", "")}
 
+    user_msg = state.get("user_message", "")
+    if not _might_have_personal_info(user_msg):
+        return {"response": state.get("response", "")}
+
+    chroma = get_chroma()
     # Only look at the last exchange
     recent = history[-2:]
     extraction_prompt = """\
@@ -513,11 +692,12 @@ Respond with ONLY the JSON, no explanation.\
 """
     try:
         raw = call_llm(recent, extraction_prompt, temperature=0.1)
-        raw = re.sub(r"```(?:json)?", "", raw).strip().rstrip("`").strip()
-        data = json.loads(raw)
-        if data:
-            chroma.update_profile_fields(**data)
-    except Exception:
-        pass
+        data = loads_loose(raw)
+        if isinstance(data, dict) and data:
+            allowed = {k: v for k, v in data.items() if k in ALLOWED_PROFILE_FIELDS}
+            if allowed:
+                chroma.update_profile_fields(**allowed)
+    except Exception as e:
+        logger.debug("update_memory: extraction skipped (%s)", e)
 
     return {"response": state.get("response", "")}

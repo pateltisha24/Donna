@@ -9,9 +9,6 @@ services:
       - ./data:/app/data
     env_file:
       - .env
-    depends_on:
-      chroma:
-        condition: service_started
     restart: unless-stopped
 
   donna-ui:
@@ -23,14 +20,3 @@ services:
     depends_on:
       - donna-app
     restart: unless-stopped
-
-  chroma:
-    image: chromadb/chroma:0.5.5
-    ports:
-      - "8001:8000"
-    volumes:
-      - chroma_data:/chroma/chroma
-    restart: unless-stopped
-
-volumes:
-  chroma_data:

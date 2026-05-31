@@ -17,6 +17,13 @@ class TaskStatus(str, Enum):
     MOVED = "moved"
 
 
+class Recurrence(str, Enum):
+    NONE = "none"
+    DAILY = "daily"
+    WEEKDAYS = "weekdays"   # Mon–Fri
+    WEEKLY = "weekly"       # specific weekdays in recurrence_days
+
+
 @dataclass
 class Task:
     title: str
@@ -29,3 +36,10 @@ class Task:
     status: TaskStatus = TaskStatus.PENDING
     created_at: datetime = field(default_factory=datetime.utcnow)
     tags: list[str] = field(default_factory=list)
+
+    # Recurrence: a task with recurrence != NONE is a *template* that
+    # materialises concrete instances on matching dates. Instances carry
+    # parent_id pointing back to their template and recurrence NONE.
+    recurrence: Recurrence = Recurrence.NONE
+    recurrence_days: list[str] = field(default_factory=list)  # e.g. ["mon","wed"]
+    parent_id: Optional[int] = None

@@ -10,7 +10,7 @@ Flow:
     -> END
 """
 
-from typing import Any
+from typing import Any, Callable, Optional
 from typing_extensions import TypedDict
 
 from langgraph.graph import END, START, StateGraph
@@ -26,6 +26,7 @@ class DonnaState(TypedDict, total=False):
     intent: str
     response: str
     next_node: str
+    stream_cb: Optional[Callable[[str], None]]  # per-request token sink (not persisted)
 
 
 # ---------------------------------------------------------------------------
@@ -33,6 +34,7 @@ class DonnaState(TypedDict, total=False):
 # ---------------------------------------------------------------------------
 
 from agent.nodes import (
+    calendar,
     check_onboarding,
     classify_intent,
     eod_wrap,
@@ -82,6 +84,7 @@ def build_graph() -> Any:
     g.add_node("general_checkin", general_checkin)
     g.add_node("profile_update", profile_update)
     g.add_node("eod_wrap", eod_wrap)
+    g.add_node("calendar", calendar)
     g.add_node("update_memory", update_memory)
 
     # Entry
@@ -112,6 +115,7 @@ def build_graph() -> Any:
             "general_checkin": "general_checkin",
             "profile_update": "profile_update",
             "eod_wrap": "eod_wrap",
+            "calendar": "calendar",
             "onboarding": "onboarding",
         },
     )
@@ -125,6 +129,7 @@ def build_graph() -> Any:
         "general_checkin",
         "profile_update",
         "eod_wrap",
+        "calendar",
     ):
         g.add_edge(node, "update_memory")
 

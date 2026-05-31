@@ -4,6 +4,34 @@
 
 @import url("https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600&display=swap");
 
+:root {
+  --bg: #0f0f11;
+  --surface: #1a1a1f;
+  --surface-2: #1e1e28;
+  --user-bubble: #2d2d38;
+  --border: #2a2a33;
+  --accent: #7c6af7;
+  --accent-contrast: #ffffff;
+  --text: #e8e8f0;
+  --muted: #8888a0;
+  --scrollbar-thumb: #2a2a33;
+  --scrollbar-thumb-hover: #3a3a45;
+}
+
+:root[data-theme="light"] {
+  --bg: #f5f5f7;
+  --surface: #ffffff;
+  --surface-2: #f0f0f3;
+  --user-bubble: #e4e4ec;
+  --border: #d8d8e0;
+  --accent: #6a57e0;
+  --accent-contrast: #ffffff;
+  --text: #1a1a22;
+  --muted: #6b6b80;
+  --scrollbar-thumb: #ccccd6;
+  --scrollbar-thumb-hover: #b3b3c0;
+}
+
 html,
 body {
   height: 100%;
@@ -20,12 +48,61 @@ body {
   width: 6px;
 }
 ::-webkit-scrollbar-track {
-  background: #1a1a1f;
+  background: var(--surface);
 }
 ::-webkit-scrollbar-thumb {
-  background: #2a2a33;
+  background: var(--scrollbar-thumb);
   border-radius: 3px;
 }
 ::-webkit-scrollbar-thumb:hover {
-  background: #3a3a45;
+  background: var(--scrollbar-thumb-hover);
+}
+
+/* Markdown content inside Donna's bubbles */
+.markdown > :first-child {
+  margin-top: 0;
+}
+.markdown > :last-child {
+  margin-bottom: 0;
+}
+.markdown p {
+  margin: 0 0 0.5rem;
+}
+.markdown ul,
+.markdown ol {
+  margin: 0 0 0.5rem;
+  padding-left: 1.25rem;
+}
+.markdown li {
+  margin: 0.125rem 0;
+}
+.markdown h1,
+.markdown h2,
+.markdown h3 {
+  font-weight: 600;
+  margin: 0.5rem 0 0.25rem;
+}
+.markdown code {
+  background: var(--bg);
+  padding: 0.1rem 0.3rem;
+  border-radius: 4px;
+  font-size: 0.85em;
+}
+.markdown pre {
+  background: var(--bg);
+  padding: 0.6rem 0.75rem;
+  border-radius: 8px;
+  overflow-x: auto;
+  margin: 0 0 0.5rem;
+}
+.markdown pre code {
+  background: none;
+  padding: 0;
+}
+.markdown a {
+  color: var(--accent);
+  text-decoration: underline;
+}
+.markdown strong {
+  font-weight: 600;
 }

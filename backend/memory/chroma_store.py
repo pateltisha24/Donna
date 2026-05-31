@@ -1,57 +1,34 @@
 """
-ChromaDB store for the user profile.
+User-profile store.
 
-One collection ("donna_user_profile") with a single document (id="profile").
-We store the entire profile as JSON in the document metadata and use the
-to_prompt_str() as the document text so semantic search also works.
+This was originally backed by ChromaDB, but the profile is a single JSON
+document that we never run semantic search over — ChromaDB was acting as an
+over-engineered key/value store and an extra service to babysit. It now lives
+in SQLite (app_state, one key). The class name `ChromaStore` is kept so the
+many callers don't have to change; `ProfileStore` is the preferred alias for
+new code.
 """
 
 import json
 import logging
-import os
-import time
-from typing import Optional
 
-import chromadb
-from chromadb.config import Settings
-
+from memory.sqlite_store import SqliteStore
 from models.user_profile import UserProfile
 
-logger = logging.getLogger("donna.chroma")
+logger = logging.getLogger("donna.profile")
 
-CHROMA_HOST = os.getenv("CHROMA_HOST", "localhost")
-CHROMA_PORT = int(os.getenv("CHROMA_PORT", "8000"))
+_PROFILE_KEY = "user_profile"
 
-COLLECTION_NAME = "donna_user_profile"
-PROFILE_DOC_ID = "profile"
+_LIST_FIELDS = {
+    "major_goals_short", "major_goals_long",
+    "known_priorities", "preferences", "notes",
+}
+_DICT_FIELDS = {"weekly_schedule", "known_people"}
 
-_MAX_RETRIES = 5
-_RETRY_DELAY = 2  # seconds
 
-
-class ChromaStore:
-    def __init__(self):
-        self._client = chromadb.HttpClient(
-            host=CHROMA_HOST,
-            port=CHROMA_PORT,
-            settings=Settings(anonymized_telemetry=False),
-        )
-        # Retry collection creation — ChromaDB may still be initialising
-        for attempt in range(1, _MAX_RETRIES + 1):
-            try:
-                self._collection = self._client.get_or_create_collection(
-                    name=COLLECTION_NAME,
-                    metadata={"hnsw:space": "cosine"},
-                )
-                return
-            except Exception as exc:
-                logger.warning(
-                    "ChromaDB not ready (attempt %d/%d): %s",
-                    attempt, _MAX_RETRIES, exc,
-                )
-                if attempt == _MAX_RETRIES:
-                    raise
-                time.sleep(_RETRY_DELAY)
+class ProfileStore:
+    def __init__(self, store: SqliteStore | None = None):
+        self._store = store or SqliteStore()
 
     # ------------------------------------------------------------------
     # Profile read / write
@@ -59,33 +36,17 @@ class ChromaStore:
 
     def get_profile(self) -> UserProfile:
         """Return the stored profile, or a blank UserProfile if none exists yet."""
-        results = self._collection.get(ids=[PROFILE_DOC_ID], include=["metadatas"])
-        if not results["ids"]:
+        raw = self._store.get_state(_PROFILE_KEY)
+        if not raw:
             return UserProfile()
-        raw = results["metadatas"][0].get("json", "{}")
-        return UserProfile.from_dict(json.loads(raw))
+        try:
+            return UserProfile.from_dict(json.loads(raw))
+        except (ValueError, TypeError) as e:
+            logger.warning("Corrupt profile JSON, returning blank: %s", e)
+            return UserProfile()
 
     def save_profile(self, profile: UserProfile) -> None:
-        """Upsert the profile document."""
-        profile_dict = profile.to_dict()
-        # ChromaDB metadata values must be str | int | float | bool
-        # We store the full profile as a JSON string under the "json" key.
-        metadata = {"json": json.dumps(profile_dict)}
-        document_text = profile.to_prompt_str()
-
-        existing = self._collection.get(ids=[PROFILE_DOC_ID], include=["metadatas"])
-        if existing["ids"]:
-            self._collection.update(
-                ids=[PROFILE_DOC_ID],
-                documents=[document_text],
-                metadatas=[metadata],
-            )
-        else:
-            self._collection.add(
-                ids=[PROFILE_DOC_ID],
-                documents=[document_text],
-                metadatas=[metadata],
-            )
+        self._store.set_state(_PROFILE_KEY, json.dumps(profile.to_dict()))
 
     # ------------------------------------------------------------------
     # Convenience patch helpers
@@ -93,31 +54,22 @@ class ChromaStore:
 
     def update_profile_fields(self, **kwargs) -> UserProfile:
         """
-        Merge scalar/list/dict updates into the stored profile and save.
+        Merge updates into the stored profile and save.
 
-        Supported kwargs match UserProfile fields.  List fields are extended,
-        dict fields are merged (not replaced), scalars are overwritten.
+        List fields are extended (deduped), dict fields are merged, scalars are
+        overwritten. Unknown keys are ignored.
         """
         profile = self.get_profile()
-
-        _LIST_FIELDS = {
-            "major_goals_short", "major_goals_long",
-            "known_priorities", "preferences", "notes",
-        }
-        _DICT_FIELDS = {"weekly_schedule", "known_people"}
 
         for key, value in kwargs.items():
             if not hasattr(profile, key):
                 continue
             if key in _LIST_FIELDS:
                 existing: list = getattr(profile, key)
-                if isinstance(value, list):
-                    for item in value:
-                        if item not in existing:
-                            existing.append(item)
-                else:
-                    if value not in existing:
-                        existing.append(value)
+                items = value if isinstance(value, list) else [value]
+                for item in items:
+                    if item not in existing:
+                        existing.append(item)
                 setattr(profile, key, existing)
             elif key in _DICT_FIELDS:
                 existing_dict: dict = getattr(profile, key)
@@ -133,3 +85,7 @@ class ChromaStore:
     def add_note(self, note: str) -> None:
         """Append a free-text note to the profile."""
         self.update_profile_fields(notes=[note])
+
+
+# Backwards-compatible alias — callers still import ChromaStore.
+ChromaStore = ProfileStore

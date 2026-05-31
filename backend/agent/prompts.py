@@ -23,6 +23,9 @@ You know the user personally:
 You have access to their tasks for today:
 {todays_tasks}
 
+Their calendar for today:
+{todays_events}
+
 Current time: {current_time}
 
 Your job is to manage their day so they can focus on doing the work. Keep \
@@ -45,15 +48,28 @@ def _fmt_tasks(tasks: list[Task]) -> str:
     return "\n".join(lines)
 
 
+def _fmt_events(events: list) -> str:
+    if not events:
+        return "No events scheduled."
+    lines = []
+    for e in events:
+        end = f"–{e.end_time}" if e.end_time else ""
+        loc = f" @ {e.location}" if e.location else ""
+        lines.append(f"  {e.start_time}{end}  {e.title}{loc}")
+    return "\n".join(lines)
+
+
 def build_system_prompt(
     profile: UserProfile,
     todays_tasks: list[Task],
     extra: str = "",
+    todays_events: list = None,
 ) -> str:
     current_time = datetime.now().strftime("%A, %B %d %Y at %H:%M")
     base = BASE_SYSTEM.format(
         user_profile=profile.to_prompt_str(),
         todays_tasks=_fmt_tasks(todays_tasks),
+        todays_events=_fmt_events(todays_events or []),
         current_time=current_time,
     )
     if extra:
@@ -76,6 +92,7 @@ Given the user's message, classify it into exactly one of these intents:
 - general_checkin    : general "what should I do now?" or status check
 - profile_update     : user is sharing personal info (people, preferences, etc.)
 - eod_wrap           : user wants end-of-day wrap or mentions finishing the day
+- calendar           : user is adding/asking about timed events, meetings, classes, or appointments
 - onboarding         : user is introducing themselves or it's clearly onboarding
 
 Respond with ONLY the intent label, nothing else.\
@@ -106,9 +123,13 @@ from their message and confirm the list back to them. For each task capture: \
 title, deadline (if mentioned), estimated duration (if mentioned), and \
 priority (infer from context and user profile).
 
+If a task repeats ("every Monday", "daily standup", "every weekday"), set its \
+recurrence: "daily", "weekdays" (Mon–Fri), or "weekly" with recurrence_days \
+(lowercase 3-letter abbrevs, e.g. ["mon","wed"]). Otherwise use "none".
+
 After the user confirms, end your message with a JSON block in this format:
 <TASKS_CONFIRMED>
-[{"title": "...", "deadline": null, "duration_estimate": null, "priority": "medium", "date_assigned": "YYYY-MM-DD"}]
+[{"title": "...", "deadline": null, "duration_estimate": null, "priority": "medium", "date_assigned": "YYYY-MM-DD", "recurrence": "none", "recurrence_days": []}]
 </TASKS_CONFIRMED>\
 """
 
@@ -156,6 +177,22 @@ today (done tasks) vs. what's moving to tomorrow (incomplete). Acknowledge \
 their effort genuinely. Ask if they want to add anything for tomorrow.\
 """
 
+CALENDAR_EXTRA = """\
+CONTEXT: The user is talking about calendar events — meetings, classes, shifts, \
+or appointments at specific times. Extract the events and confirm them back \
+concisely. Capture: title, date (YYYY-MM-DD), start_time and end_time (HH:MM \
+24h), and location if mentioned.
+
+For anything that repeats (a weekly class, a recurring shift) set recurrence to \
+"weekly" with recurrence_days (lowercase 3-letter, e.g. ["tue","fri"]), \
+"weekdays" (Mon–Fri), or "daily". Otherwise use "none".
+
+After the user confirms, end your message with a JSON block:
+<EVENTS_CONFIRMED>
+[{"title": "...", "date": "YYYY-MM-DD", "start_time": "HH:MM", "end_time": "HH:MM", "location": "", "recurrence": "none", "recurrence_days": []}]
+</EVENTS_CONFIRMED>\
+"""
+
 INTENT_TO_EXTRA = {
     "onboarding": ONBOARDING_EXTRA,
     "task_input": TASK_INPUT_EXTRA,
@@ -165,4 +202,5 @@ INTENT_TO_EXTRA = {
     "general_checkin": GENERAL_CHECKIN_EXTRA,
     "profile_update": PROFILE_UPDATE_EXTRA,
     "eod_wrap": EOD_WRAP_EXTRA,
+    "calendar": CALENDAR_EXTRA,
 }

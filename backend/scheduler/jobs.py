@@ -6,7 +6,9 @@ Jobs:
   - eod_wrap_job          : fires at user's eod_time
 
 Both jobs inject a synthetic "system" message into the conversation so the
-LangGraph agent handles them exactly like a real user message.
+LangGraph agent handles them exactly like a real user message. The generated
+briefing is persisted into the default session so it's waiting for the user
+the next time they open Donna.
 
 The scheduler is started from main.py after the FastAPI app is ready.
 """
@@ -16,84 +18,124 @@ from datetime import datetime
 
 from apscheduler.schedulers.background import BackgroundScheduler
 from apscheduler.triggers.cron import CronTrigger
+from apscheduler.triggers.date import DateTrigger
 
 from memory.chroma_store import ChromaStore
 from memory.sqlite_store import SqliteStore
+from models.task import Recurrence
 from utils.time_utils import parse_time
 
 logger = logging.getLogger("donna.scheduler")
 
 _scheduler: BackgroundScheduler | None = None
 
-# We import the session store lazily to avoid circular imports
-_get_session_store = None  # set by main.py
+# Scheduled briefings land in the same session the user sees on open.
+DEFAULT_SESSION = "default"
 
-
-def set_session_store_getter(getter):
-    """Inject the session store getter from main.py."""
-    global _get_session_store
-    _get_session_store = getter
+# How many minutes before an event to send its reminder.
+REMINDER_LEAD_MIN = 15
 
 
 # ---------------------------------------------------------------------------
 # Job functions
 # ---------------------------------------------------------------------------
 
-def morning_briefing_job():
-    logger.info("Scheduler: firing morning briefing")
-    if _get_session_store is None:
-        logger.warning("Session store getter not set — skipping briefing")
-        return
-    session_store = _get_session_store()
-
+def _run_scheduled(event: str, user_message: str, title: str) -> None:
+    """Run an intent through the graph, persist it, and push a notification."""
     from agent.graph import donna_graph
+    from notify.push import send_to_all
 
-    # Use a dedicated scheduler session
-    session_id = "scheduler_morning"
-    history = session_store.get(session_id, [])
+    store = SqliteStore()
+    history = store.get_history(DEFAULT_SESSION)
 
     state = {
-        "user_message": "Good morning! Give me my morning briefing.",
+        "user_message": user_message,
         "history": history,
-        "intent": "morning_briefing",
+        "intent": event,
     }
 
     try:
         result = donna_graph.invoke(state)
-        new_history = result.get("history", history)
-        session_store[session_id] = new_history
         response = result.get("response", "")
-        logger.info("Morning briefing response: %s", response[:120])
+        store.save_history(DEFAULT_SESSION, result.get("history", history))
+        logger.info("%s delivered: %s", event, response[:120])
+        if response:
+            # Notification bodies should be short; trim to a teaser.
+            body = response if len(response) <= 160 else response[:157] + "…"
+            send_to_all(title, body, store=store)
     except Exception as e:
-        logger.error("Morning briefing job error: %s", e)
+        logger.error("%s job error: %s", event, e)
+
+
+# ---------------------------------------------------------------------------
+# Per-event reminders (15 min before)
+# ---------------------------------------------------------------------------
+
+def _event_reminder_job(title: str, start_time: str) -> None:
+    from notify.push import send_to_all
+    send_to_all(f"Soon: {title}", f"Starts at {start_time}")
+
+
+def _cron_day_of_week(event) -> str:
+    if event.recurrence == Recurrence.DAILY:
+        return "*"
+    if event.recurrence == Recurrence.WEEKDAYS:
+        return "mon-fri"
+    return ",".join(event.recurrence_days)
+
+
+def reschedule_event_reminders() -> None:
+    """Rebuild all per-event reminder jobs from the events table."""
+    if _scheduler is None or not _scheduler.running:
+        return
+
+    for job in list(_scheduler.get_jobs()):
+        if job.id.startswith("event_reminder_"):
+            _scheduler.remove_job(job.id)
+
+    store = SqliteStore()
+    for e in store.get_all_events():
+        h, m = parse_time(e.start_time)
+        lead = h * 60 + m - REMINDER_LEAD_MIN
+        if lead < 0:  # reminder would fall on the previous day — skip edge case
+            continue
+        rh, rm = divmod(lead, 60)
+        job_id = f"event_reminder_{e.id}"
+
+        if e.recurrence == Recurrence.NONE:
+            try:
+                run_at = datetime.fromisoformat(f"{e.date}T{rh:02d}:{rm:02d}:00")
+            except ValueError:
+                continue
+            if run_at <= datetime.now():
+                continue
+            _scheduler.add_job(
+                _event_reminder_job, DateTrigger(run_date=run_at),
+                args=[e.title, e.start_time], id=job_id, replace_existing=True,
+            )
+        else:
+            _scheduler.add_job(
+                _event_reminder_job,
+                CronTrigger(day_of_week=_cron_day_of_week(e), hour=rh, minute=rm),
+                args=[e.title, e.start_time], id=job_id, replace_existing=True,
+            )
+    logger.info("Rescheduled event reminders")
+
+
+def morning_briefing_job():
+    logger.info("Scheduler: firing morning briefing")
+    _run_scheduled(
+        "morning_briefing", "Good morning! Give me my morning briefing.",
+        title="Your morning briefing",
+    )
 
 
 def eod_wrap_job():
     logger.info("Scheduler: firing EOD wrap")
-    if _get_session_store is None:
-        logger.warning("Session store getter not set — skipping EOD wrap")
-        return
-    session_store = _get_session_store()
-
-    from agent.graph import donna_graph
-
-    session_id = "scheduler_eod"
-    history = session_store.get(session_id, [])
-
-    state = {
-        "user_message": "It's end of day. Let's wrap up.",
-        "history": history,
-        "intent": "eod_wrap",
-    }
-
-    try:
-        result = donna_graph.invoke(state)
-        new_history = result.get("history", history)
-        session_store[session_id] = new_history
-        response = result.get("response", "")
-        logger.info("EOD wrap response: %s", response[:120])
-    except Exception as e:
-        logger.error("EOD wrap job error: %s", e)
+    _run_scheduled(
+        "eod_wrap", "It's end of day. Let's wrap up.",
+        title="End-of-day wrap",
+    )
 
 
 # ---------------------------------------------------------------------------
@@ -123,9 +165,8 @@ def _get_times() -> tuple[tuple[int, int], tuple[int, int]]:
         return (8, 0), (21, 0)
 
 
-def start_scheduler(session_store_getter) -> BackgroundScheduler:
+def start_scheduler() -> BackgroundScheduler:
     global _scheduler
-    set_session_store_getter(session_store_getter)
 
     if _scheduler is not None and _scheduler.running:
         return _scheduler
@@ -155,6 +196,7 @@ def start_scheduler(session_store_getter) -> BackgroundScheduler:
         "Scheduler started. Morning at %02d:%02d, EOD at %02d:%02d",
         wake_h, wake_m, eod_h, eod_m,
     )
+    reschedule_event_reminders()
     return _scheduler
 
 
