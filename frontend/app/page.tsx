@@ -20,7 +20,7 @@ export default function LandingPage() {
   return (
     <main className="min-h-screen bg-background text-foreground">
       {/* Nav */}
-      <header className="sticky top-0 z-30 border-b border-border/60 bg-background/70 backdrop-blur-xl">
+      <header className="sticky top-0 z-30 border-b border-border/60 bg-background/90 [transform:translateZ(0)] will-change-transform">
         <div className="max-w-6xl mx-auto flex items-center justify-between px-4 md:px-6 h-14">
           <div className="flex items-center gap-2.5">
             <DonnaAvatar size="sm" />
@@ -37,8 +37,11 @@ export default function LandingPage() {
 
       {/* Hero */}
       <section className="relative overflow-hidden">
-        <div className="absolute inset-0 bg-grid pointer-events-none" />
-        <div className="absolute top-1/3 left-1/2 -translate-x-1/2 w-[600px] h-[600px] bg-primary/20 rounded-full blur-[120px] pointer-events-none" />
+        <div className="absolute inset-0 bg-grid pointer-events-none [contain:paint]" />
+        <div
+          aria-hidden
+          className="absolute top-1/3 left-1/2 w-[480px] h-[480px] bg-primary/20 rounded-full blur-3xl pointer-events-none [transform:translate3d(-50%,0,0)] will-change-transform"
+        />
 
         <div className="relative max-w-6xl mx-auto px-4 md:px-6 pt-20 pb-24 text-center">
           <div className="inline-flex items-center gap-2 mb-6 px-3 py-1 rounded-full border border-border bg-card/60 backdrop-blur text-xs font-medium animate-fade-in">
@@ -68,7 +71,7 @@ export default function LandingPage() {
 
         {/* Screenshot mock */}
         <div className="relative max-w-5xl mx-auto px-4 md:px-6 pb-20">
-          <div className="rounded-2xl border border-border bg-card overflow-hidden shadow-2xl shadow-primary/10">
+          <div className="rounded-2xl border border-border bg-card overflow-hidden shadow-xl">
             <div className="flex items-center gap-1.5 px-4 py-2.5 border-b border-border bg-card">
               <span className="h-2.5 w-2.5 rounded-full bg-[#ff5f57]" />
               <span className="h-2.5 w-2.5 rounded-full bg-[#febc2e]" />
@@ -79,7 +82,7 @@ export default function LandingPage() {
             </div>
             <div className="p-6 md:p-8 bg-background/60">
               <div className="flex items-start gap-3 mb-5">
-                <DonnaAvatar size="md" animated />
+                <DonnaAvatar size="md" />
                 <div className="rounded-2xl rounded-tl-sm border border-border bg-card px-4 py-3 max-w-md">
                   <p className="text-sm">
                     <strong>Good morning, Tisha.</strong> You have 4 things today:
@@ -112,7 +115,7 @@ export default function LandingPage() {
       </section>
 
       {/* Features */}
-      <section className="max-w-6xl mx-auto px-4 md:px-6 py-20">
+      <section className="max-w-6xl mx-auto px-4 md:px-6 py-20" style={{ contentVisibility: "auto", containIntrinsicSize: "1px 600px" }}>
         <div className="text-center mb-14">
           <Badge variant="outline" className="mb-3">
             Four specialized agents
@@ -151,7 +154,7 @@ export default function LandingPage() {
       </section>
 
       {/* Differentiators */}
-      <section className="max-w-6xl mx-auto px-4 md:px-6 py-20 border-t border-border">
+      <section className="max-w-6xl mx-auto px-4 md:px-6 py-20 border-t border-border" style={{ contentVisibility: "auto", containIntrinsicSize: "1px 400px" }}>
         <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
           <Highlight
             icon={MessageSquare}
@@ -172,7 +175,7 @@ export default function LandingPage() {
       </section>
 
       {/* Tech */}
-      <section className="max-w-6xl mx-auto px-4 md:px-6 py-20 border-t border-border text-center">
+      <section className="max-w-6xl mx-auto px-4 md:px-6 py-20 border-t border-border text-center" style={{ contentVisibility: "auto", containIntrinsicSize: "1px 300px" }}>
         <h3 className="text-2xl font-semibold tracking-tight mb-3">Built on production-grade tooling</h3>
         <p className="text-muted-foreground mb-8">Containerised. Tested. Observable. Deployable.</p>
         <div className="flex flex-wrap justify-center gap-2">
@@ -197,8 +200,7 @@ export default function LandingPage() {
 
       {/* CTA */}
       <section className="max-w-4xl mx-auto px-4 md:px-6 py-20 text-center">
-        <div className="relative rounded-2xl border border-border bg-gradient-to-br from-card via-card to-accent/30 p-10 overflow-hidden">
-          <div className="absolute inset-0 bg-grid opacity-30 pointer-events-none" />
+        <div className="relative rounded-2xl border border-border bg-card p-10 overflow-hidden">
           <div className="relative">
             <CheckCircle2 className="h-8 w-8 text-primary mx-auto mb-4" />
             <h3 className="text-2xl md:text-3xl font-semibold tracking-tight mb-3">
@@ -252,7 +254,7 @@ function FeatureCard({
   description: string;
 }) {
   return (
-    <div className="group relative rounded-xl border border-border bg-card p-6 hover:border-primary/40 transition-all hover:shadow-lg hover:shadow-primary/5">
+    <div className="group relative rounded-xl border border-border bg-card p-6 hover:border-primary/40 hover:shadow-lg [transition:border-color_180ms_ease,box-shadow_180ms_ease]">
       <div className="flex items-start gap-4">
         <div className="h-10 w-10 rounded-lg bg-accent/60 flex items-center justify-center shrink-0 group-hover:bg-accent transition-colors">
           <Icon className="h-5 w-5 text-primary" />
