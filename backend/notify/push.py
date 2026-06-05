@@ -10,7 +10,7 @@ import json
 import logging
 import os
 
-from memory.sqlite_store import SqliteStore
+from memory.mongo_store import MongoStore
 
 logger = logging.getLogger("donna.push")
 
@@ -23,7 +23,7 @@ def push_enabled() -> bool:
     return bool(VAPID_PUBLIC_KEY and VAPID_PRIVATE_KEY)
 
 
-def send_to_all(title: str, body: str, store: SqliteStore | None = None) -> int:
+def send_to_all(title: str, body: str, store: MongoStore | None = None) -> int:
     """Send a notification to every stored subscription. Returns count delivered."""
     if not push_enabled():
         logger.info("Push disabled (no VAPID keys) — skipping notification")
@@ -31,7 +31,7 @@ def send_to_all(title: str, body: str, store: SqliteStore | None = None) -> int:
 
     from pywebpush import WebPushException, webpush
 
-    store = store or SqliteStore()
+    store = store or MongoStore()
     payload = json.dumps({"title": title, "body": body})
     delivered = 0
 

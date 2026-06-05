@@ -1,7 +1,11 @@
 "use client";
 
-import React, { useEffect, useState } from "react";
-import { getVapidKey, subscribePush, unsubscribePush } from "../../lib/api";
+import * as React from "react";
+import { Bell, BellOff } from "lucide-react";
+import { toast } from "sonner";
+import { Button } from "@/components/ui/button";
+import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip";
+import { getVapidKey, subscribePush, unsubscribePush } from "@/lib/api";
 
 function urlBase64ToUint8Array(base64: string): Uint8Array {
   const padding = "=".repeat((4 - (base64.length % 4)) % 4);
@@ -14,10 +18,10 @@ function urlBase64ToUint8Array(base64: string): Uint8Array {
 
 type State = "unsupported" | "off" | "on" | "busy";
 
-export default function NotificationToggle() {
-  const [state, setState] = useState<State>("off");
+export function PushToggle() {
+  const [state, setState] = React.useState<State>("off");
 
-  useEffect(() => {
+  React.useEffect(() => {
     if (!("serviceWorker" in navigator) || !("PushManager" in window)) {
       setState("unsupported");
       return;
@@ -33,12 +37,13 @@ export default function NotificationToggle() {
     try {
       const { key, enabled } = await getVapidKey();
       if (!enabled || !key) {
-        alert("Push isn't configured on the server.");
+        toast.error("Push isn't configured on the server.");
         setState("off");
         return;
       }
       const permission = await Notification.requestPermission();
       if (permission !== "granted") {
+        toast.message("Notifications denied.");
         setState("off");
         return;
       }
@@ -50,8 +55,10 @@ export default function NotificationToggle() {
       });
       await subscribePush(sub.toJSON() as PushSubscriptionJSON);
       setState("on");
+      toast.success("Briefing notifications enabled.");
     } catch (e) {
       console.error("Failed to enable notifications", e);
+      toast.error("Couldn't enable notifications.");
       setState("off");
     }
   };
@@ -65,6 +72,7 @@ export default function NotificationToggle() {
         await unsubscribePush(sub.endpoint);
         await sub.unsubscribe();
       }
+      toast.message("Notifications disabled.");
     } catch (e) {
       console.error("Failed to disable notifications", e);
     }
@@ -72,23 +80,24 @@ export default function NotificationToggle() {
   };
 
   if (state === "unsupported") return null;
-
   const on = state === "on";
+
   return (
-    <button
-      onClick={on ? disable : enable}
-      disabled={state === "busy"}
-      title={on ? "Disable briefing notifications" : "Enable briefing notifications"}
-      aria-label="Toggle notifications"
-      className="w-8 h-8 rounded-full flex items-center justify-center text-sm transition-colors"
-      style={{
-        backgroundColor: on ? "var(--accent)" : "var(--surface-2)",
-        color: on ? "var(--accent-contrast)" : "var(--muted)",
-        border: "1px solid var(--border)",
-        cursor: state === "busy" ? "wait" : "pointer",
-      }}
-    >
-      {on ? "🔔" : "🔕"}
-    </button>
+    <Tooltip>
+      <TooltipTrigger asChild>
+        <Button
+          variant={on ? "default" : "ghost"}
+          size="icon-sm"
+          onClick={on ? disable : enable}
+          disabled={state === "busy"}
+          aria-label="Toggle notifications"
+        >
+          {on ? <Bell className="h-4 w-4" /> : <BellOff className="h-4 w-4" />}
+        </Button>
+      </TooltipTrigger>
+      <TooltipContent>
+        {on ? "Briefing notifications on" : "Enable briefing notifications"}
+      </TooltipContent>
+    </Tooltip>
   );
 }

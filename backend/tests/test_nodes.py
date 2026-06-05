@@ -32,6 +32,9 @@ class FakeSqlite:
         self.events.append(event)
         return event
 
+    def conflicts_for_event(self, event, target_date=None):
+        return []
+
 
 class FakeChroma:
     def __init__(self):

@@ -1,0 +1,57 @@
+# Render.com deployment config for Donna's backend.
+#
+# Setup steps:
+#   1. Push to GitHub.
+#   2. dashboard.render.com → New → Blueprint → pick this repo.
+#   3. Set the secrets marked `sync: false` in the Render UI.
+#   4. Update CORS_ALLOW_ORIGINS once you know the final Vercel URL.
+#
+# Primary storage is MongoDB Atlas (set MONGODB_URI). The mounted disk only
+# holds Chroma's file-based semantic-recall index.
+
+services:
+  - type: web
+    name: donna-backend
+    env: docker
+    region: oregon
+    plan: free
+    rootDir: backend
+    dockerfilePath: ../Dockerfile
+    dockerContext: backend
+    healthCheckPath: /health
+    autoDeploy: true
+
+    envVars:
+      # ----- Required secrets (paste in the Render dashboard) -----
+      - key: GROQ_API_KEY
+        sync: false
+      - key: MONGODB_URI
+        sync: false
+      - key: VAPID_PUBLIC_KEY
+        sync: false
+      - key: VAPID_PRIVATE_KEY
+        sync: false
+
+      # ----- Required non-secrets -----
+      - key: MONGODB_DB
+        value: Donna
+      - key: VAPID_CLAIM_EMAIL
+        value: mailto:admin@donna.app
+
+      # CORS: comma-separated list of allowed frontend origins.
+      # Update once Vercel hands you the final URL.
+      - key: CORS_ALLOW_ORIGINS
+        value: https://donna.vercel.app,http://localhost:3000
+
+      # Chroma writes its index here (mapped to the persistent disk below).
+      - key: CHROMA_DB_PATH
+        value: /data/chroma
+
+      # Scheduler timezone. Switch to the user's tz before deploy.
+      - key: SCHEDULER_TZ
+        value: America/New_York
+
+    disk:
+      name: donna-data
+      mountPath: /data
+      sizeGB: 1

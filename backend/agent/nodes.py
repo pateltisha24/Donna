@@ -33,7 +33,7 @@ from agent.prompts import (
     build_system_prompt,
 )
 from memory.chroma_store import ChromaStore
-from memory.sqlite_store import SqliteStore
+from memory.mongo_store import MongoStore
 from models.task import Priority, Recurrence, Task, TaskStatus
 from models.user_profile import UserProfile
 from utils.time_utils import today_str, tomorrow_str
@@ -91,14 +91,15 @@ def call_llm(
 # Shared stores (singletons — initialised lazily so tests can mock them)
 # ---------------------------------------------------------------------------
 
-_sqlite_store: SqliteStore | None = None
+_sqlite_store: MongoStore | None = None
 _chroma_store: ChromaStore | None = None
 
 
-def get_sqlite() -> SqliteStore:
+def get_sqlite() -> MongoStore:
+    """Legacy alias retained so existing callers don't need to change."""
     global _sqlite_store
     if _sqlite_store is None:
-        _sqlite_store = SqliteStore()
+        _sqlite_store = MongoStore()
     return _sqlite_store
 
 
@@ -558,14 +559,28 @@ def calendar(state: dict) -> dict:
             )
         if result.ok:
             saved = 0
+            conflict_msgs: list[str] = []
             for ev in build_events(result.value):
+                # Conflict-resolution layer: check overlaps *before* saving so we
+                # can flag them to the user. We still save, then let the user
+                # decide to reschedule — silently dropping the write would be
+                # worse than a clear collision warning.
                 try:
-                    sqlite.add_event(ev)
+                    overlaps = sqlite.conflicts_for_event(ev)
+                    saved_ev = sqlite.add_event(ev)
                     saved += 1
+                    if overlaps:
+                        names = ", ".join(f"'{o.title}' ({o.start_time})" for o in overlaps)
+                        conflict_msgs.append(
+                            f"Heads up: '{saved_ev.title}' at {saved_ev.start_time} "
+                            f"overlaps with {names}. Want me to move one?"
+                        )
                 except Exception as e:
                     logger.warning("calendar: could not save event: %s", e)
             if saved:
                 _reschedule_reminders()
+                if conflict_msgs:
+                    response_clean += "\n\n" + "\n".join(conflict_msgs)
             else:
                 response_clean += "\n\nI had trouble saving those — could you restate them?"
         else:
@@ -657,9 +672,29 @@ def _might_have_personal_info(text: str) -> bool:
 def update_memory(state: dict) -> dict:
     """
     After a response, opportunistically extract new user info and persist it.
-    Gated by a cheap heuristic so we don't fire a second LLM call on every
-    turn — only when the user message plausibly contains something to learn.
+    Also semantically index the assistant's response so future turns can recall
+    relevant context via ChromaDB.
+
+    Profile extraction is gated by a cheap heuristic so we don't fire a second
+    LLM call on every turn — only when the user message plausibly contains
+    something to learn. Semantic indexing always runs (no LLM cost).
     """
+    # Semantic indexing always runs — never gated, never expensive. Failure is
+    # silent so a broken vector store can't break the chat path.
+    try:
+        from memory.semantic_store import SemanticStore
+        history_for_index = state.get("history", [])
+        if history_for_index:
+            last = history_for_index[-1]
+            if last.get("role") == "assistant" and last.get("content"):
+                SemanticStore().index_message(
+                    session_id=state.get("session_id", "default"),
+                    role="assistant",
+                    content=last["content"],
+                )
+    except Exception as e:  # noqa: BLE001
+        logger.debug("semantic index skipped: %s", e)
+
     intent = state.get("intent", "")
     # These intents already handle their own writes / aren't about the user.
     if intent in ("profile_update", "onboarding", "eod_wrap", "calendar"):

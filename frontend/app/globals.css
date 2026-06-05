@@ -2,107 +2,191 @@
 @tailwind components;
 @tailwind utilities;
 
-@import url("https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600&display=swap");
+@layer base {
+  :root,
+  :root[data-theme="light"] {
+    --background: 240 20% 98%;
+    --foreground: 240 10% 10%;
 
-:root {
-  --bg: #0f0f11;
-  --surface: #1a1a1f;
-  --surface-2: #1e1e28;
-  --user-bubble: #2d2d38;
-  --border: #2a2a33;
-  --accent: #7c6af7;
-  --accent-contrast: #ffffff;
-  --text: #e8e8f0;
-  --muted: #8888a0;
-  --scrollbar-thumb: #2a2a33;
-  --scrollbar-thumb-hover: #3a3a45;
+    --card: 0 0% 100%;
+    --card-foreground: 240 10% 10%;
+
+    --popover: 0 0% 100%;
+    --popover-foreground: 240 10% 10%;
+
+    --primary: 252 75% 60%;
+    --primary-foreground: 0 0% 100%;
+
+    --secondary: 240 10% 96%;
+    --secondary-foreground: 240 10% 15%;
+
+    --muted: 240 10% 95%;
+    --muted-foreground: 240 8% 45%;
+
+    --accent: 252 90% 95%;
+    --accent-foreground: 252 80% 35%;
+
+    --destructive: 0 80% 60%;
+    --destructive-foreground: 0 0% 100%;
+
+    --success: 142 70% 45%;
+    --warning: 38 92% 50%;
+
+    --border: 240 10% 90%;
+    --input: 240 10% 92%;
+    --ring: 252 75% 60%;
+
+    --radius: 0.75rem;
+  }
+
+  :root[data-theme="dark"] {
+    --background: 240 12% 6%;
+    --foreground: 240 10% 95%;
+
+    --card: 240 12% 9%;
+    --card-foreground: 240 10% 95%;
+
+    --popover: 240 12% 9%;
+    --popover-foreground: 240 10% 95%;
+
+    --primary: 252 80% 68%;
+    --primary-foreground: 240 12% 6%;
+
+    --secondary: 240 12% 12%;
+    --secondary-foreground: 240 10% 92%;
+
+    --muted: 240 12% 14%;
+    --muted-foreground: 240 8% 60%;
+
+    --accent: 252 60% 20%;
+    --accent-foreground: 252 90% 92%;
+
+    --destructive: 0 75% 60%;
+    --destructive-foreground: 240 10% 95%;
+
+    --success: 142 65% 55%;
+    --warning: 38 92% 55%;
+
+    --border: 240 12% 16%;
+    --input: 240 12% 16%;
+    --ring: 252 80% 68%;
+  }
 }
 
-:root[data-theme="light"] {
-  --bg: #f5f5f7;
-  --surface: #ffffff;
-  --surface-2: #f0f0f3;
-  --user-bubble: #e4e4ec;
-  --border: #d8d8e0;
-  --accent: #6a57e0;
-  --accent-contrast: #ffffff;
-  --text: #1a1a22;
-  --muted: #6b6b80;
-  --scrollbar-thumb: #ccccd6;
-  --scrollbar-thumb-hover: #b3b3c0;
+@layer base {
+  * {
+    @apply border-border;
+  }
+
+  html,
+  body {
+    height: 100%;
+    margin: 0;
+    padding: 0;
+  }
+
+  body {
+    @apply bg-background text-foreground antialiased;
+    font-feature-settings: "rlig" 1, "calt" 1, "ss01" 1;
+  }
+
+  ::selection {
+    @apply bg-primary/30 text-foreground;
+  }
+
+  /* Scrollbar */
+  ::-webkit-scrollbar {
+    width: 8px;
+    height: 8px;
+  }
+  ::-webkit-scrollbar-track {
+    background: transparent;
+  }
+  ::-webkit-scrollbar-thumb {
+    @apply bg-border/60 rounded-full;
+  }
+  ::-webkit-scrollbar-thumb:hover {
+    @apply bg-border;
+  }
 }
 
-html,
-body {
-  height: 100%;
-  margin: 0;
-  padding: 0;
+@layer components {
+  /* Animated gradient text used in landing hero */
+  .text-gradient {
+    @apply bg-clip-text text-transparent;
+    background-image: linear-gradient(
+      120deg,
+      hsl(var(--primary)) 0%,
+      hsl(280 80% 70%) 50%,
+      hsl(var(--primary)) 100%
+    );
+    background-size: 200% auto;
+    animation: gradient-shift 6s ease infinite;
+  }
+
+  /* Subtle grid background for hero */
+  .bg-grid {
+    background-image:
+      linear-gradient(to right, hsl(var(--border) / 0.4) 1px, transparent 1px),
+      linear-gradient(to bottom, hsl(var(--border) / 0.4) 1px, transparent 1px);
+    background-size: 48px 48px;
+    mask-image: radial-gradient(ellipse at center, black 30%, transparent 75%);
+  }
+
+  /* Glass card */
+  .glass {
+    @apply bg-card/60 backdrop-blur-xl border border-border/60;
+  }
+
+  /* Markdown content inside Donna's bubbles */
+  .markdown > :first-child {
+    margin-top: 0;
+  }
+  .markdown > :last-child {
+    margin-bottom: 0;
+  }
+  .markdown p {
+    margin: 0 0 0.5rem;
+  }
+  .markdown ul,
+  .markdown ol {
+    margin: 0 0 0.5rem;
+    padding-left: 1.25rem;
+  }
+  .markdown li {
+    margin: 0.125rem 0;
+  }
+  .markdown h1,
+  .markdown h2,
+  .markdown h3 {
+    font-weight: 600;
+    margin: 0.75rem 0 0.375rem;
+    letter-spacing: -0.01em;
+  }
+  .markdown code {
+    @apply bg-muted text-foreground px-1.5 py-0.5 rounded text-[0.85em] font-mono;
+  }
+  .markdown pre {
+    @apply bg-muted/60 border border-border rounded-lg p-3 overflow-x-auto my-2;
+  }
+  .markdown pre code {
+    background: none;
+    padding: 0;
+  }
+  .markdown a {
+    @apply text-primary underline underline-offset-2 hover:opacity-80;
+  }
+  .markdown strong {
+    @apply font-semibold text-foreground;
+  }
+  .markdown blockquote {
+    @apply border-l-2 border-primary/60 pl-3 italic text-muted-foreground my-2;
+  }
 }
 
-* {
-  box-sizing: border-box;
-}
-
-/* Custom scrollbar */
-::-webkit-scrollbar {
-  width: 6px;
-}
-::-webkit-scrollbar-track {
-  background: var(--surface);
-}
-::-webkit-scrollbar-thumb {
-  background: var(--scrollbar-thumb);
-  border-radius: 3px;
-}
-::-webkit-scrollbar-thumb:hover {
-  background: var(--scrollbar-thumb-hover);
-}
-
-/* Markdown content inside Donna's bubbles */
-.markdown > :first-child {
-  margin-top: 0;
-}
-.markdown > :last-child {
-  margin-bottom: 0;
-}
-.markdown p {
-  margin: 0 0 0.5rem;
-}
-.markdown ul,
-.markdown ol {
-  margin: 0 0 0.5rem;
-  padding-left: 1.25rem;
-}
-.markdown li {
-  margin: 0.125rem 0;
-}
-.markdown h1,
-.markdown h2,
-.markdown h3 {
-  font-weight: 600;
-  margin: 0.5rem 0 0.25rem;
-}
-.markdown code {
-  background: var(--bg);
-  padding: 0.1rem 0.3rem;
-  border-radius: 4px;
-  font-size: 0.85em;
-}
-.markdown pre {
-  background: var(--bg);
-  padding: 0.6rem 0.75rem;
-  border-radius: 8px;
-  overflow-x: auto;
-  margin: 0 0 0.5rem;
-}
-.markdown pre code {
-  background: none;
-  padding: 0;
-}
-.markdown a {
-  color: var(--accent);
-  text-decoration: underline;
-}
-.markdown strong {
-  font-weight: 600;
+/* Custom focus ring */
+@layer utilities {
+  .focus-ring {
+    @apply focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2 focus-visible:ring-offset-background;
+  }
 }

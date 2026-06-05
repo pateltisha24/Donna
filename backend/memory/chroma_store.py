@@ -1,23 +1,22 @@
 """
 User-profile store.
 
-This was originally backed by ChromaDB, but the profile is a single JSON
-document that we never run semantic search over — ChromaDB was acting as an
-over-engineered key/value store and an extra service to babysit. It now lives
-in SQLite (app_state, one key). The class name `ChromaStore` is kept so the
-many callers don't have to change; `ProfileStore` is the preferred alias for
-new code.
+Profiles live in the MongoDB `profiles` collection (keyed by user_id). This
+class wraps the storage so all callers (`get_chroma()`, `ChromaStore`) keep
+working unchanged.
+
+The `ChromaStore` name is a backwards-compat alias from when the profile was
+in ChromaDB. ChromaDB itself is now used only for semantic conversation recall
+in `semantic_store.py` — not for the profile.
 """
 
-import json
 import logging
+from typing import Optional
 
-from memory.sqlite_store import SqliteStore
+from memory.mongo_store import MongoStore
 from models.user_profile import UserProfile
 
 logger = logging.getLogger("donna.profile")
-
-_PROFILE_KEY = "user_profile"
 
 _LIST_FIELDS = {
     "major_goals_short", "major_goals_long",
@@ -27,26 +26,25 @@ _DICT_FIELDS = {"weekly_schedule", "known_people"}
 
 
 class ProfileStore:
-    def __init__(self, store: SqliteStore | None = None):
-        self._store = store or SqliteStore()
+    def __init__(self, store: Optional[MongoStore] = None):
+        self._store = store or MongoStore()
 
     # ------------------------------------------------------------------
     # Profile read / write
     # ------------------------------------------------------------------
 
     def get_profile(self) -> UserProfile:
-        """Return the stored profile, or a blank UserProfile if none exists yet."""
-        raw = self._store.get_state(_PROFILE_KEY)
-        if not raw:
+        data = self._store.get_profile_doc()
+        if not data:
             return UserProfile()
         try:
-            return UserProfile.from_dict(json.loads(raw))
+            return UserProfile.from_dict(data)
         except (ValueError, TypeError) as e:
-            logger.warning("Corrupt profile JSON, returning blank: %s", e)
+            logger.warning("Corrupt profile data, returning blank: %s", e)
             return UserProfile()
 
     def save_profile(self, profile: UserProfile) -> None:
-        self._store.set_state(_PROFILE_KEY, json.dumps(profile.to_dict()))
+        self._store.save_profile_doc(profile.to_dict())
 
     # ------------------------------------------------------------------
     # Convenience patch helpers
@@ -83,7 +81,6 @@ class ProfileStore:
         return profile
 
     def add_note(self, note: str) -> None:
-        """Append a free-text note to the profile."""
         self.update_profile_fields(notes=[note])
 
 

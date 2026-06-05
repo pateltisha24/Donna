@@ -14,14 +14,19 @@ The scheduler is started from main.py after the FastAPI app is ready.
 """
 
 import logging
+import os
 from datetime import datetime
 
 from apscheduler.schedulers.background import BackgroundScheduler
 from apscheduler.triggers.cron import CronTrigger
 from apscheduler.triggers.date import DateTrigger
 
+# Scheduler timezone is configurable so a deployed instance can run on the
+# user's local time rather than UTC. Falls back to UTC for safety in tests.
+SCHEDULER_TZ = os.getenv("SCHEDULER_TZ", "UTC")
+
 from memory.chroma_store import ChromaStore
-from memory.sqlite_store import SqliteStore
+from memory.mongo_store import MongoStore
 from models.task import Recurrence
 from utils.time_utils import parse_time
 
@@ -45,7 +50,7 @@ def _run_scheduled(event: str, user_message: str, title: str) -> None:
     from agent.graph import donna_graph
     from notify.push import send_to_all
 
-    store = SqliteStore()
+    store = MongoStore()
     history = store.get_history(DEFAULT_SESSION)
 
     state = {
@@ -93,7 +98,7 @@ def reschedule_event_reminders() -> None:
         if job.id.startswith("event_reminder_"):
             _scheduler.remove_job(job.id)
 
-    store = SqliteStore()
+    store = MongoStore()
     for e in store.get_all_events():
         h, m = parse_time(e.start_time)
         lead = h * 60 + m - REMINDER_LEAD_MIN
@@ -143,9 +148,9 @@ def eod_wrap_job():
 # ---------------------------------------------------------------------------
 
 def _get_times() -> tuple[tuple[int, int], tuple[int, int]]:
-    """Read wake_time and eod_time from SQLite (with defaults)."""
+    """Read wake_time and eod_time from app_state (with defaults)."""
     try:
-        sqlite = SqliteStore()
+        sqlite = MongoStore()
         wake_raw = sqlite.get_state("morning_briefing_time") or "08:00"
         eod_raw = sqlite.get_state("eod_wrap_time") or "21:00"
 
@@ -173,7 +178,7 @@ def start_scheduler() -> BackgroundScheduler:
 
     (wake_h, wake_m), (eod_h, eod_m) = _get_times()
 
-    _scheduler = BackgroundScheduler(timezone="UTC")
+    _scheduler = BackgroundScheduler(timezone=SCHEDULER_TZ)
 
     _scheduler.add_job(
         morning_briefing_job,

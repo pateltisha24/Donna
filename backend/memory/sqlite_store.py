@@ -83,6 +83,17 @@ CREATE TABLE IF NOT EXISTS sessions (
     updated_at TEXT NOT NULL
 );
 
+CREATE TABLE IF NOT EXISTS chats (
+    id              TEXT PRIMARY KEY,        -- UUID; doubles as session_id
+    user_id         TEXT NOT NULL DEFAULT 'default',
+    title           TEXT NOT NULL DEFAULT 'New chat',
+    created_at      TEXT NOT NULL,
+    updated_at      TEXT NOT NULL,
+    last_message_at TEXT,
+    archived        INTEGER NOT NULL DEFAULT 0
+);
+CREATE INDEX IF NOT EXISTS chats_by_user ON chats (user_id, updated_at DESC);
+
 CREATE TABLE IF NOT EXISTS push_subscriptions (
     endpoint     TEXT PRIMARY KEY,
     subscription TEXT NOT NULL,             -- full PushSubscription JSON
@@ -456,6 +467,90 @@ class SqliteStore:
         self.save_history(session_id, history)
 
     # ------------------------------------------------------------------
+    # Chats (multiple conversations per user)
+    # ------------------------------------------------------------------
+
+    def create_chat(self, chat_id: str, user_id: str = "default", title: str = "New chat") -> dict:
+        now = datetime.utcnow().isoformat()
+        with self._conn() as conn:
+            conn.execute(
+                "INSERT INTO chats (id, user_id, title, created_at, updated_at)"
+                " VALUES (?, ?, ?, ?, ?)",
+                (chat_id, user_id, title, now, now),
+            )
+        return {
+            "id": chat_id,
+            "user_id": user_id,
+            "title": title,
+            "created_at": now,
+            "updated_at": now,
+            "last_message_at": None,
+            "archived": False,
+        }
+
+    def list_chats(self, user_id: str = "default") -> list[dict]:
+        with self._conn() as conn:
+            rows = conn.execute(
+                "SELECT id, user_id, title, created_at, updated_at, last_message_at, archived"
+                " FROM chats WHERE user_id = ? AND archived = 0"
+                " ORDER BY COALESCE(last_message_at, updated_at) DESC",
+                (user_id,),
+            ).fetchall()
+        return [
+            {
+                "id": r["id"],
+                "user_id": r["user_id"],
+                "title": r["title"],
+                "created_at": r["created_at"],
+                "updated_at": r["updated_at"],
+                "last_message_at": r["last_message_at"],
+                "archived": bool(r["archived"]),
+            }
+            for r in rows
+        ]
+
+    def get_chat(self, chat_id: str) -> Optional[dict]:
+        with self._conn() as conn:
+            row = conn.execute(
+                "SELECT id, user_id, title, created_at, updated_at, last_message_at, archived"
+                " FROM chats WHERE id = ?",
+                (chat_id,),
+            ).fetchone()
+        if not row:
+            return None
+        return {
+            "id": row["id"],
+            "user_id": row["user_id"],
+            "title": row["title"],
+            "created_at": row["created_at"],
+            "updated_at": row["updated_at"],
+            "last_message_at": row["last_message_at"],
+            "archived": bool(row["archived"]),
+        }
+
+    def rename_chat(self, chat_id: str, title: str) -> None:
+        now = datetime.utcnow().isoformat()
+        with self._conn() as conn:
+            conn.execute(
+                "UPDATE chats SET title = ?, updated_at = ? WHERE id = ?",
+                (title, now, chat_id),
+            )
+
+    def touch_chat(self, chat_id: str) -> None:
+        """Update last_message_at so the chat sorts to the top of the list."""
+        now = datetime.utcnow().isoformat()
+        with self._conn() as conn:
+            conn.execute(
+                "UPDATE chats SET last_message_at = ?, updated_at = ? WHERE id = ?",
+                (now, now, chat_id),
+            )
+
+    def delete_chat(self, chat_id: str) -> None:
+        with self._conn() as conn:
+            conn.execute("DELETE FROM chats WHERE id = ?", (chat_id,))
+            conn.execute("DELETE FROM sessions WHERE session_id = ?", (chat_id,))
+
+    # ------------------------------------------------------------------
     # Web Push subscriptions
     # ------------------------------------------------------------------
 
@@ -537,4 +632,63 @@ class SqliteStore:
         for i in range(days):
             d = (start_date + timedelta(days=i)).isoformat()
             out.extend(self.get_events_for_date(d))
+        return out
+
+    # ------------------------------------------------------------------
+    # Conflict resolution layer
+    # ------------------------------------------------------------------
+    #
+    # Two events conflict when their time windows on the same date overlap
+    # (open-end semantics: [start, end) — touching is not a conflict).
+    # If either event has no end_time, we treat it as a 60-minute block.
+
+    @staticmethod
+    def _time_to_min(hhmm: str) -> int:
+        try:
+            h, m = hhmm.split(":")
+            return int(h) * 60 + int(m)
+        except (ValueError, AttributeError):
+            return 0
+
+    @staticmethod
+    def _event_window(e: Event) -> tuple[int, int]:
+        start = SqliteStore._time_to_min(e.start_time)
+        end = SqliteStore._time_to_min(e.end_time) if e.end_time else start + 60
+        return start, end
+
+    def find_event_conflicts(self, target_date: str) -> list[dict]:
+        """
+        Return all overlapping event pairs on `target_date`. Each conflict is
+        a dict with both events' titles, times, and ids.
+        """
+        events = self.get_events_for_date(target_date)
+        windows = [(e, *self._event_window(e)) for e in events]
+
+        conflicts: list[dict] = []
+        for i in range(len(windows)):
+            a, a_start, a_end = windows[i]
+            for j in range(i + 1, len(windows)):
+                b, b_start, b_end = windows[j]
+                if a_start < b_end and b_start < a_end:
+                    conflicts.append({
+                        "date": target_date,
+                        "a": {"id": a.id, "title": a.title, "start": a.start_time, "end": a.end_time},
+                        "b": {"id": b.id, "title": b.title, "start": b.start_time, "end": b.end_time},
+                    })
+        return conflicts
+
+    def conflicts_for_event(self, event: Event, target_date: str | None = None) -> list[Event]:
+        """
+        Return existing events that overlap with `event` on the given date.
+        Useful before/after add_event to surface conflicts to the user.
+        """
+        d = target_date or event.date
+        e_start, e_end = self._event_window(event)
+        out: list[Event] = []
+        for existing in self.get_events_for_date(d):
+            if existing.id == event.id:
+                continue
+            o_start, o_end = self._event_window(existing)
+            if e_start < o_end and o_start < e_end:
+                out.append(existing)
         return out

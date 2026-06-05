@@ -201,6 +201,39 @@ export async function unsubscribePush(endpoint: string): Promise<void> {
   });
 }
 
+export interface RecallResult {
+  document: string;
+  role: string | null;
+  session_id: string | null;
+  ts: string | null;
+  score: number | null;
+}
+
+/** Semantic recall over indexed assistant messages (ChromaDB). */
+export async function recall(query: string, limit = 5): Promise<RecallResult[]> {
+  const res = await fetch(
+    `${API_URL}/recall?q=${encodeURIComponent(query)}&limit=${limit}`
+  );
+  if (!res.ok) return [];
+  const data = await res.json();
+  return (data.results ?? []) as RecallResult[];
+}
+
+export interface AgentInfo {
+  name: string;
+  summary: string;
+  nodes: string[];
+  tools: string[];
+}
+
+/** Fetch the four-agent metadata for the About page. */
+export async function getAgents(): Promise<AgentInfo[]> {
+  const res = await fetch(`${API_URL}/agents`);
+  if (!res.ok) return [];
+  const data = await res.json();
+  return (data.agents ?? []) as AgentInfo[];
+}
+
 /** Load persisted conversation history for a session. */
 export async function getHistory(sessionId: string): Promise<Message[]> {
   const res = await fetch(
@@ -212,4 +245,94 @@ export async function getHistory(sessionId: string): Promise<Message[]> {
     role: m.role === "assistant" ? "donna" : "user",
     content: m.content,
   }));
+}
+
+// ---------------------------------------------------------------------------
+// Chats — multi-conversation
+// ---------------------------------------------------------------------------
+
+export interface Chat {
+  id: string;
+  user_id: string;
+  title: string;
+  created_at: string;
+  updated_at: string;
+  last_message_at: string | null;
+  archived: boolean;
+}
+
+export async function listChats(userId = "default"): Promise<Chat[]> {
+  const res = await fetch(`${API_URL}/chats?user_id=${encodeURIComponent(userId)}`);
+  if (!res.ok) return [];
+  const data = await res.json();
+  return (data.chats ?? []) as Chat[];
+}
+
+export async function createChat(userId = "default", title?: string): Promise<Chat> {
+  const res = await fetch(`${API_URL}/chats`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ user_id: userId, title }),
+  });
+  if (!res.ok) throw new Error(`Create chat failed: ${res.status}`);
+  return res.json();
+}
+
+export async function renameChat(id: string, title: string): Promise<void> {
+  await fetch(`${API_URL}/chats/${id}`, {
+    method: "PATCH",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ title }),
+  });
+}
+
+export async function deleteChat(id: string): Promise<void> {
+  await fetch(`${API_URL}/chats/${id}`, { method: "DELETE" });
+}
+
+export async function titleChatFromMessage(
+  id: string,
+  firstMessage: string
+): Promise<string> {
+  const res = await fetch(`${API_URL}/chats/${id}/title`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ first_message: firstMessage }),
+  });
+  if (!res.ok) return "";
+  const data = await res.json();
+  return (data.title as string) || "";
+}
+
+// ---------------------------------------------------------------------------
+// Me / settings
+// ---------------------------------------------------------------------------
+
+export interface UserProfile {
+  name: string;
+  occupation: string;
+  institution: string;
+  working_style: string;
+  wake_time: string;
+  eod_time: string;
+  major_goals_short: string[];
+  major_goals_long: string[];
+  preferences: string[];
+}
+
+export async function getMe(): Promise<{ user_id: string; profile: UserProfile }> {
+  const res = await fetch(`${API_URL}/me`);
+  if (!res.ok) throw new Error(`API error: ${res.status}`);
+  return res.json();
+}
+
+export async function updateSettings(patch: Partial<UserProfile>): Promise<UserProfile | null> {
+  const res = await fetch(`${API_URL}/me/settings`, {
+    method: "PATCH",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(patch),
+  });
+  if (!res.ok) return null;
+  const data = await res.json();
+  return (data.profile ?? null) as UserProfile | null;
 }
