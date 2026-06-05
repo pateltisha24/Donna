@@ -52,7 +52,13 @@
       "Bash(curl -s 'http://localhost:8000/tasks?date=2026-06-05' -H 'X-User-Id: bob@example.com')",
       "Bash(curl -s 'http://localhost:8000/tasks?date=2026-06-05' -H 'X-User-Id: demo')",
       "Bash(curl -s -X DELETE http://localhost:8000/chats/964cd96e-dfcb-4fd4-aea1-c05b2f5156a7 -H 'X-User-Id: alice@example.com' -w 'alice cleanup: %{http_code}\\\\n')",
-      "Bash(curl -s -X DELETE http://localhost:8000/chats/117bea36-1d03-469d-a951-bf14edc3bcdc -H 'X-User-Id: bob@example.com' -w 'bob cleanup: %{http_code}\\\\n')"
+      "Bash(curl -s -X DELETE http://localhost:8000/chats/117bea36-1d03-469d-a951-bf14edc3bcdc -H 'X-User-Id: bob@example.com' -w 'bob cleanup: %{http_code}\\\\n')",
+      "Bash(curl -s http://localhost:8000/chats -H 'X-User-Id: demo')",
+      "Bash(curl -s \"http://localhost:8000/tasks?date=$\\(date +%Y-%m-%d\\)\" -H 'X-User-Id: demo')",
+      "Bash(curl -s 'http://localhost:8000/events?days=7' -H 'X-User-Id: demo')",
+      "Bash(curl -s -o /dev/null -w 'frontend HTTP %{http_code}\\\\n' http://localhost:3000/app)",
+      "Bash(curl -s -o /dev/null -w '  /chats  request __TRACKED_VAR__: %{time_total}s\\\\n' http://localhost:8000/chats -H 'X-User-Id: demo')",
+      "Bash(curl -s -o /dev/null -w '  /tasks  request __TRACKED_VAR__: %{time_total}s\\\\n' http://localhost:8000/tasks?date=__CMDSUB_OUTPUT__ -H 'X-User-Id: demo')"
     ]
   }
 }

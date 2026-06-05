@@ -65,6 +65,7 @@ def _now_iso() -> str:
 
 _client: Optional[MongoClient] = None
 _db: Optional[Database] = None
+_INDEXES_READY = False
 
 
 def _get_db() -> Database:
@@ -90,6 +91,25 @@ def ping() -> bool:
     except Exception as e:
         logger.warning("Mongo ping failed: %s", e)
         return False
+
+
+def _ensure_indexes_once() -> None:
+    """Run index DDL exactly once per process — not per request."""
+    global _INDEXES_READY
+    if _INDEXES_READY:
+        return
+    try:
+        db = _get_db()
+        db["tasks"].create_index([("user_id", ASCENDING), ("date_assigned", ASCENDING)])
+        db["tasks"].create_index([("user_id", ASCENDING), ("task_id", ASCENDING)], unique=True)
+        db["events"].create_index([("user_id", ASCENDING), ("date", ASCENDING)])
+        db["events"].create_index([("user_id", ASCENDING), ("event_id", ASCENDING)], unique=True)
+        db["chats"].create_index([("user_id", ASCENDING), ("last_message_at", DESCENDING)])
+        db["push_subscriptions"].create_index("user_id")
+        db["counters"].create_index("_id")
+        _INDEXES_READY = True
+    except Exception as e:
+        logger.warning("Mongo index setup skipped: %s", e)
 
 
 # ---------------------------------------------------------------------------
@@ -190,22 +210,7 @@ class MongoStore:
 
     def __init__(self, default_user: str = "default") -> None:
         self.user_id = default_user
-        self._ensure_indexes()
-
-    # ---- indexes ----------------------------------------------------------
-
-    def _ensure_indexes(self) -> None:
-        try:
-            db = _get_db()
-            db["tasks"].create_index([("user_id", ASCENDING), ("date_assigned", ASCENDING)])
-            db["tasks"].create_index([("user_id", ASCENDING), ("task_id", ASCENDING)], unique=True)
-            db["events"].create_index([("user_id", ASCENDING), ("date", ASCENDING)])
-            db["events"].create_index([("user_id", ASCENDING), ("event_id", ASCENDING)], unique=True)
-            db["chats"].create_index([("user_id", ASCENDING), ("last_message_at", DESCENDING)])
-            db["push_subscriptions"].create_index("user_id")
-            db["counters"].create_index("_id")
-        except Exception as e:
-            logger.warning("Mongo index setup skipped: %s", e)
+        _ensure_indexes_once()
 
     # ---- collections (always re-resolved so connections recover) ----------
 

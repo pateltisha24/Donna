@@ -23,18 +23,25 @@ export function clearUserIdCache(): void {
 
 async function resolveUserId(): Promise<string> {
   try {
-    if (typeof window !== "undefined") {
-      // A signed-in NextAuth session always wins. Falls through to demo only
-      // if no session AND no demo marker, so brand-new visitors land in demo.
-      const session = await getSession();
-      const email = session?.user?.email?.trim().toLowerCase();
-      if (email) {
-        try {
-          localStorage.removeItem("donna_user"); // clear stale demo marker
-        } catch {}
-        return email;
-      }
-      if (localStorage.getItem("donna_user") === "demo") return "demo";
+    if (typeof window === "undefined") return "demo";
+
+    // If the user explicitly chose demo, short-circuit — no need to wait for
+    // NextAuth to hit /api/auth/session.
+    if (localStorage.getItem("donna_user") === "demo") return "demo";
+
+    // Race the session call against a 1.5s deadline so the UI never hangs on
+    // a slow / misconfigured auth endpoint. If it loses the race we fall back
+    // to demo and the UI keeps moving; the next call may resolve the real id.
+    const session = await Promise.race<{ user?: { email?: string | null } } | null>([
+      getSession(),
+      new Promise((resolve) => setTimeout(() => resolve(null), 1500)),
+    ]);
+    const email = session?.user?.email?.trim().toLowerCase();
+    if (email) {
+      try {
+        localStorage.removeItem("donna_user");
+      } catch {}
+      return email;
     }
   } catch {
     // fall through
