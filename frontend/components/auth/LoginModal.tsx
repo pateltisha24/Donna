@@ -11,6 +11,7 @@ import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { DonnaAvatar } from "@/components/ui/avatar";
 import { cn } from "@/lib/utils";
+import { clearUserIdCache } from "@/lib/api";
 
 const API_URL = process.env.NEXT_PUBLIC_API_URL || "http://localhost:8000";
 
@@ -58,6 +59,7 @@ export function LoginModal({
     try {
       localStorage.setItem("donna_user", "demo");
     } catch {}
+    clearUserIdCache();
     router.push("/app");
   };
 
@@ -99,6 +101,10 @@ export function LoginModal({
         toast.error("Incorrect email or password.");
         setBusy(false);
       } else {
+        try {
+          localStorage.removeItem("donna_user");
+        } catch {}
+        clearUserIdCache();
         reset();
         router.push("/app");
       }
@@ -153,6 +159,10 @@ export function LoginModal({
         setPassword("");
         setBusy(false);
       } else {
+        try {
+          localStorage.removeItem("donna_user");
+        } catch {}
+        clearUserIdCache();
         reset();
         router.push("/app");
       }

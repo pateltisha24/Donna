@@ -38,7 +38,21 @@
       "Bash(grep -q '^\\\\.env\\\\.local$' /Users/tisha/Projects/Donna/.gitignore)",
       "Bash(curl -s -o /tmp/sigin.html -w '%{http_code}\\\\n' 'http://localhost:3000/?login=open')",
       "Bash(python3 -c \"import json,sys; d=json.load\\(sys.stdin\\); [print\\(f'  - {c[\\\\\"title\\\\\"]}'\\) for c in d['chats']]\")",
-      "Bash(curl -s http://localhost:3000/ -o /tmp/landing.html)"
+      "Bash(curl -s http://localhost:3000/ -o /tmp/landing.html)",
+      "Bash(curl -s -X POST http://localhost:8000/chats -H 'Content-Type: application/json' -H 'X-User-Id: alice@example.com' -d '{\"title\":\"Alice secret chat\"}')",
+      "Bash(curl -s -X POST http://localhost:8000/chats -H 'Content-Type: application/json' -H 'X-User-Id: bob@example.com' -d '{\"title\":\"Bob private chat\"}')",
+      "Bash(curl -s http://localhost:8000/chats -H 'X-User-Id: alice@example.com')",
+      "Bash(python3 -m json.tool)",
+      "Bash(curl -s http://localhost:8000/chats -H 'X-User-Id: bob@example.com')",
+      "Bash(curl -s -o /dev/null -w 'HTTP %{http_code}\\\\n' http://localhost:8000/chats/964cd96e-dfcb-4fd4-aea1-c05b2f5156a7 -H 'X-User-Id: bob@example.com')",
+      "Bash(curl -s -o /dev/null -w 'HTTP %{http_code}\\\\n' -X PATCH http://localhost:8000/chats/964cd96e-dfcb-4fd4-aea1-c05b2f5156a7 -H 'X-User-Id: bob@example.com' -H 'Content-Type: application/json' -d '{\"title\":\"Pwned\"}')",
+      "Bash(curl -s -o /dev/null -w 'HTTP %{http_code}\\\\n' -X DELETE http://localhost:8000/chats/964cd96e-dfcb-4fd4-aea1-c05b2f5156a7 -H 'X-User-Id: bob@example.com')",
+      "Bash(curl -s -o /dev/null -w 'HTTP %{http_code}\\\\n' http://localhost:8000/chats/964cd96e-dfcb-4fd4-aea1-c05b2f5156a7 -H 'X-User-Id: alice@example.com')",
+      "Bash(curl -s 'http://localhost:8000/tasks?date=2026-06-05' -H 'X-User-Id: alice@example.com')",
+      "Bash(curl -s 'http://localhost:8000/tasks?date=2026-06-05' -H 'X-User-Id: bob@example.com')",
+      "Bash(curl -s 'http://localhost:8000/tasks?date=2026-06-05' -H 'X-User-Id: demo')",
+      "Bash(curl -s -X DELETE http://localhost:8000/chats/964cd96e-dfcb-4fd4-aea1-c05b2f5156a7 -H 'X-User-Id: alice@example.com' -w 'alice cleanup: %{http_code}\\\\n')",
+      "Bash(curl -s -X DELETE http://localhost:8000/chats/117bea36-1d03-469d-a951-bf14edc3bcdc -H 'X-User-Id: bob@example.com' -w 'bob cleanup: %{http_code}\\\\n')"
     ]
   }
 }

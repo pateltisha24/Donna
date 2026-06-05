@@ -18,7 +18,7 @@ import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { TopBar } from "@/components/app/TopBar";
-import { getMe, updateSettings, type UserProfile } from "@/lib/api";
+import { getMe, updateSettings, clearUserIdCache, type UserProfile } from "@/lib/api";
 
 export default function SettingsPage() {
   const router = useRouter();
@@ -89,6 +89,7 @@ export default function SettingsPage() {
     try {
       localStorage.removeItem("donna_user");
     } catch {}
+    clearUserIdCache();
     if (session?.user) {
       await signOut({ callbackUrl: "/" });
     } else {

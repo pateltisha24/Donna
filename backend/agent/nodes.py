@@ -91,23 +91,17 @@ def call_llm(
 # Shared stores (singletons — initialised lazily so tests can mock them)
 # ---------------------------------------------------------------------------
 
-_sqlite_store: MongoStore | None = None
-_chroma_store: ChromaStore | None = None
+# Stores are constructed PER REQUEST from the graph state's `user_id` so that
+# nodes never accidentally read/write another user's data. The (state-less)
+# scheduled jobs fall back to "default" — see scheduler/jobs.py.
+
+def get_sqlite(state: dict | None = None) -> MongoStore:
+    user_id = (state or {}).get("user_id") or "default"
+    return MongoStore(default_user=user_id)
 
 
-def get_sqlite() -> MongoStore:
-    """Legacy alias retained so existing callers don't need to change."""
-    global _sqlite_store
-    if _sqlite_store is None:
-        _sqlite_store = MongoStore()
-    return _sqlite_store
-
-
-def get_chroma() -> ChromaStore:
-    global _chroma_store
-    if _chroma_store is None:
-        _chroma_store = ChromaStore()
-    return _chroma_store
+def get_chroma(state: dict | None = None) -> ChromaStore:
+    return ChromaStore(get_sqlite(state))
 
 
 # ---------------------------------------------------------------------------
@@ -189,7 +183,7 @@ def check_onboarding(state: dict) -> dict:
     Decide whether to run onboarding or proceed to intent classification.
     Returns next_node in state.
     """
-    sqlite = get_sqlite()
+    sqlite = get_sqlite(state)
     if sqlite.is_onboarding_complete():
         return {"next_node": "classify_intent"}
     return {"next_node": "onboarding"}
@@ -204,8 +198,8 @@ def onboarding(state: dict) -> dict:
     Multi-turn onboarding flow.  Donna asks questions and builds the profile.
     When she decides onboarding is complete she appends <ONBOARDING_COMPLETE>.
     """
-    chroma = get_chroma()
-    sqlite = get_sqlite()
+    chroma = get_chroma(state)
+    sqlite = get_sqlite(state)
     profile = chroma.get_profile()
 
     system = build_system_prompt(profile, [], extra=ONBOARDING_EXTRA)
@@ -222,7 +216,7 @@ def onboarding(state: dict) -> dict:
     if has_token(response, "<ONBOARDING_COMPLETE>"):
         response_clean = strip_block(response, "ONBOARDING_COMPLETE")
         # Extract whatever profile info we can from the conversation
-        _save_profile_from_conversation(history + [{"role": "assistant", "content": response_clean}], profile)
+        _save_profile_from_conversation(history + [{"role": "assistant", "content": response_clean}], profile, state)
         sqlite.complete_onboarding()
         return {
             "response": response_clean,
@@ -237,9 +231,13 @@ def onboarding(state: dict) -> dict:
     }
 
 
-def _save_profile_from_conversation(history: list[dict], existing_profile: UserProfile) -> None:
+def _save_profile_from_conversation(
+    history: list[dict],
+    existing_profile: UserProfile,
+    state: dict,
+) -> None:
     """Ask the LLM to extract a profile JSON from the onboarding conversation."""
-    chroma = get_chroma()
+    chroma = get_chroma(state)
     extraction_prompt = """\
 You are a data extraction assistant. Given this onboarding conversation, \
 extract the user profile as a JSON object with these keys (use empty \
@@ -294,8 +292,8 @@ def classify_intent(state: dict) -> dict:
 # ---------------------------------------------------------------------------
 
 def morning_briefing(state: dict) -> dict:
-    chroma = get_chroma()
-    sqlite = get_sqlite()
+    chroma = get_chroma(state)
+    sqlite = get_sqlite(state)
     profile = chroma.get_profile()
     tasks = sqlite.get_tasks_for_date(today_str())
     events = sqlite.get_events_for_date(today_str())
@@ -322,8 +320,8 @@ def morning_briefing(state: dict) -> dict:
 # ---------------------------------------------------------------------------
 
 def task_input(state: dict) -> dict:
-    chroma = get_chroma()
-    sqlite = get_sqlite()
+    chroma = get_chroma(state)
+    sqlite = get_sqlite(state)
     profile = chroma.get_profile()
     tasks = sqlite.get_tasks_for_date(today_str())
 
@@ -376,8 +374,8 @@ def task_input(state: dict) -> dict:
 # ---------------------------------------------------------------------------
 
 def task_update(state: dict) -> dict:
-    chroma = get_chroma()
-    sqlite = get_sqlite()
+    chroma = get_chroma(state)
+    sqlite = get_sqlite(state)
     profile = chroma.get_profile()
     tasks = sqlite.get_tasks_for_date(today_str())
 
@@ -428,8 +426,8 @@ def task_update(state: dict) -> dict:
 # ---------------------------------------------------------------------------
 
 def emergency_replan(state: dict) -> dict:
-    chroma = get_chroma()
-    sqlite = get_sqlite()
+    chroma = get_chroma(state)
+    sqlite = get_sqlite(state)
     profile = chroma.get_profile()
     tasks = sqlite.get_tasks_for_date(today_str())
 
@@ -455,8 +453,8 @@ def emergency_replan(state: dict) -> dict:
 # ---------------------------------------------------------------------------
 
 def general_checkin(state: dict) -> dict:
-    chroma = get_chroma()
-    sqlite = get_sqlite()
+    chroma = get_chroma(state)
+    sqlite = get_sqlite(state)
     profile = chroma.get_profile()
     tasks = sqlite.get_tasks_for_date(today_str())
     events = sqlite.get_events_for_date(today_str())
@@ -483,8 +481,8 @@ def general_checkin(state: dict) -> dict:
 # ---------------------------------------------------------------------------
 
 def profile_update(state: dict) -> dict:
-    chroma = get_chroma()
-    sqlite = get_sqlite()
+    chroma = get_chroma(state)
+    sqlite = get_sqlite(state)
     profile = chroma.get_profile()
     tasks = sqlite.get_tasks_for_date(today_str())
 
@@ -530,8 +528,8 @@ def profile_update(state: dict) -> dict:
 # ---------------------------------------------------------------------------
 
 def calendar(state: dict) -> dict:
-    chroma = get_chroma()
-    sqlite = get_sqlite()
+    chroma = get_chroma(state)
+    sqlite = get_sqlite(state)
     profile = chroma.get_profile()
     tasks = sqlite.get_tasks_for_date(today_str())
     events = sqlite.get_events_for_date(today_str())
@@ -608,8 +606,8 @@ def _reschedule_reminders() -> None:
 # ---------------------------------------------------------------------------
 
 def eod_wrap(state: dict) -> dict:
-    chroma = get_chroma()
-    sqlite = get_sqlite()
+    chroma = get_chroma(state)
+    sqlite = get_sqlite(state)
     profile = chroma.get_profile()
 
     today = today_str()
@@ -708,7 +706,7 @@ def update_memory(state: dict) -> dict:
     if not _might_have_personal_info(user_msg):
         return {"response": state.get("response", "")}
 
-    chroma = get_chroma()
+    chroma = get_chroma(state)
     # Only look at the last exchange
     recent = history[-2:]
     extraction_prompt = """\

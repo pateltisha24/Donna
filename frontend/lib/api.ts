@@ -1,4 +1,68 @@
+import { getSession } from "next-auth/react";
+
 const API_URL = process.env.NEXT_PUBLIC_API_URL || "http://localhost:8000";
+
+// ---------------------------------------------------------------------------
+// Identity — every request to the backend carries an `X-User-Id` header.
+// The id is the user's email (Google / email-password login) or the literal
+// "demo" for the shared sandbox. The backend's `get_user_id` dependency uses
+// it to scope every MongoStore instance to that user.
+// ---------------------------------------------------------------------------
+
+let _cachedUserId: string | null = null;
+let _userIdPromise: Promise<string> | null = null;
+
+/**
+ * Reset the cached identity (call on sign-in / sign-out so the next request
+ * resolves the new user). Called by the auth modal + ProfileMenu.
+ */
+export function clearUserIdCache(): void {
+  _cachedUserId = null;
+  _userIdPromise = null;
+}
+
+async function resolveUserId(): Promise<string> {
+  try {
+    if (typeof window !== "undefined") {
+      // A signed-in NextAuth session always wins. Falls through to demo only
+      // if no session AND no demo marker, so brand-new visitors land in demo.
+      const session = await getSession();
+      const email = session?.user?.email?.trim().toLowerCase();
+      if (email) {
+        try {
+          localStorage.removeItem("donna_user"); // clear stale demo marker
+        } catch {}
+        return email;
+      }
+      if (localStorage.getItem("donna_user") === "demo") return "demo";
+    }
+  } catch {
+    // fall through
+  }
+  return "demo";
+}
+
+async function getCurrentUserId(): Promise<string> {
+  if (_cachedUserId) return _cachedUserId;
+  if (!_userIdPromise) {
+    _userIdPromise = resolveUserId().then((id) => {
+      _cachedUserId = id;
+      return id;
+    });
+  }
+  return _userIdPromise;
+}
+
+/**
+ * Drop-in replacement for `fetch(API_URL + path, init)` that always injects
+ * the X-User-Id header. Use this for every backend call.
+ */
+async function apiFetch(path: string, init: RequestInit = {}): Promise<Response> {
+  const userId = await getCurrentUserId();
+  const headers = new Headers(init.headers || {});
+  if (!headers.has("X-User-Id")) headers.set("X-User-Id", userId);
+  return apiFetch(`${path}`, { ...init, headers });
+}
 
 export interface Message {
   role: "user" | "donna";
@@ -106,7 +170,7 @@ export async function sendMessage(
   onDone: () => void,
   onError?: (message: string) => void
 ): Promise<void> {
-  const res = await fetch(`${API_URL}/chat`, {
+  const res = await apiFetch(`/chat`, {
     method: "POST",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify({ message, session_id: sessionId }),
@@ -122,7 +186,7 @@ export async function triggerEvent(
   onDone: () => void,
   onError?: (message: string) => void
 ): Promise<void> {
-  const res = await fetch(`${API_URL}/trigger`, {
+  const res = await apiFetch(`/trigger`, {
     method: "POST",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify({ event, session_id: sessionId }),
@@ -136,14 +200,14 @@ export async function searchTasks(filters: TaskFilters): Promise<Task[]> {
   Object.entries(filters).forEach(([k, v]) => {
     if (v) params.set(k, v);
   });
-  const res = await fetch(`${API_URL}/search?${params.toString()}`);
+  const res = await apiFetch(`/search?${params.toString()}`);
   if (!res.ok) throw new Error(`API error: ${res.status}`);
   return res.json();
 }
 
 /** Fetch completion analytics over the last `days` days. */
 export async function getAnalytics(days = 7): Promise<Analytics> {
-  const res = await fetch(`${API_URL}/analytics?days=${days}`);
+  const res = await apiFetch(`/analytics?days=${days}`);
   if (!res.ok) throw new Error(`API error: ${res.status}`);
   return res.json();
 }
@@ -154,21 +218,21 @@ export async function uploadCalendarFile(
 ): Promise<{ created: CalEvent[]; message: string }> {
   const form = new FormData();
   form.append("file", file);
-  const res = await fetch(`${API_URL}/upload`, { method: "POST", body: form });
+  const res = await apiFetch(`/upload`, { method: "POST", body: form });
   if (!res.ok) throw new Error(`Upload failed: ${res.status}`);
   return res.json();
 }
 
 /** Upcoming calendar events over the next `days` days. */
 export async function getEvents(days = 7): Promise<CalEvent[]> {
-  const res = await fetch(`${API_URL}/events?days=${days}`);
+  const res = await apiFetch(`/events?days=${days}`);
   if (!res.ok) throw new Error(`API error: ${res.status}`);
   return res.json();
 }
 
 /** Delete an event. */
 export async function deleteEvent(id: number): Promise<void> {
-  await fetch(`${API_URL}/events/${id}`, { method: "DELETE" });
+  await apiFetch(`/events/${id}`, { method: "DELETE" });
 }
 
 /** URL to download all events as an .ics for Apple Calendar. */
@@ -178,14 +242,14 @@ export function calendarIcsUrl(): string {
 
 /** Get the server's VAPID public key (and whether push is configured). */
 export async function getVapidKey(): Promise<{ key: string; enabled: boolean }> {
-  const res = await fetch(`${API_URL}/push/vapid-public-key`);
+  const res = await apiFetch(`/push/vapid-public-key`);
   if (!res.ok) throw new Error(`API error: ${res.status}`);
   return res.json();
 }
 
 /** Register a browser push subscription with the backend. */
 export async function subscribePush(sub: PushSubscriptionJSON): Promise<void> {
-  await fetch(`${API_URL}/push/subscribe`, {
+  await apiFetch(`/push/subscribe`, {
     method: "POST",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify(sub),
@@ -194,7 +258,7 @@ export async function subscribePush(sub: PushSubscriptionJSON): Promise<void> {
 
 /** Remove a push subscription from the backend. */
 export async function unsubscribePush(endpoint: string): Promise<void> {
-  await fetch(`${API_URL}/push/unsubscribe`, {
+  await apiFetch(`/push/unsubscribe`, {
     method: "POST",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify({ endpoint }),
@@ -228,7 +292,7 @@ export interface AgentInfo {
 
 /** Fetch the four-agent metadata for the About page. */
 export async function getAgents(): Promise<AgentInfo[]> {
-  const res = await fetch(`${API_URL}/agents`);
+  const res = await apiFetch(`/agents`);
   if (!res.ok) return [];
   const data = await res.json();
   return (data.agents ?? []) as AgentInfo[];
@@ -261,25 +325,25 @@ export interface Chat {
   archived: boolean;
 }
 
-export async function listChats(userId = "default"): Promise<Chat[]> {
-  const res = await fetch(`${API_URL}/chats?user_id=${encodeURIComponent(userId)}`);
+export async function listChats(): Promise<Chat[]> {
+  const res = await apiFetch(`/chats`);
   if (!res.ok) return [];
   const data = await res.json();
   return (data.chats ?? []) as Chat[];
 }
 
-export async function createChat(userId = "default", title?: string): Promise<Chat> {
-  const res = await fetch(`${API_URL}/chats`, {
+export async function createChat(title?: string): Promise<Chat> {
+  const res = await apiFetch(`/chats`, {
     method: "POST",
     headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ user_id: userId, title }),
+    body: JSON.stringify({ title }),
   });
   if (!res.ok) throw new Error(`Create chat failed: ${res.status}`);
   return res.json();
 }
 
 export async function renameChat(id: string, title: string): Promise<void> {
-  await fetch(`${API_URL}/chats/${id}`, {
+  await apiFetch(`/chats/${id}`, {
     method: "PATCH",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify({ title }),
@@ -287,14 +351,14 @@ export async function renameChat(id: string, title: string): Promise<void> {
 }
 
 export async function deleteChat(id: string): Promise<void> {
-  await fetch(`${API_URL}/chats/${id}`, { method: "DELETE" });
+  await apiFetch(`/chats/${id}`, { method: "DELETE" });
 }
 
 export async function titleChatFromMessage(
   id: string,
   firstMessage: string
 ): Promise<string> {
-  const res = await fetch(`${API_URL}/chats/${id}/title`, {
+  const res = await apiFetch(`/chats/${id}/title`, {
     method: "POST",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify({ first_message: firstMessage }),
@@ -321,13 +385,13 @@ export interface UserProfile {
 }
 
 export async function getMe(): Promise<{ user_id: string; profile: UserProfile }> {
-  const res = await fetch(`${API_URL}/me`);
+  const res = await apiFetch(`/me`);
   if (!res.ok) throw new Error(`API error: ${res.status}`);
   return res.json();
 }
 
 export async function updateSettings(patch: Partial<UserProfile>): Promise<UserProfile | null> {
-  const res = await fetch(`${API_URL}/me/settings`, {
+  const res = await apiFetch(`/me/settings`, {
     method: "PATCH",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify(patch),

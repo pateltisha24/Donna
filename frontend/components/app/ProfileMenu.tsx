@@ -15,6 +15,7 @@ import {
 } from "lucide-react";
 import { Avatar, UserAvatar } from "@/components/ui/avatar";
 import { cn } from "@/lib/utils";
+import { clearUserIdCache } from "@/lib/api";
 
 export function ProfileMenu() {
   const { data: session, status } = useSession();
@@ -41,6 +42,7 @@ export function ProfileMenu() {
     try {
       localStorage.removeItem("donna_user");
     } catch {}
+    clearUserIdCache();
     if (isAuthed) {
       // Bring the user back to the landing with the modal forced open.
       await signOut({ callbackUrl: "/" });
