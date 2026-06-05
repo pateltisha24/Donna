@@ -1,0 +1,26 @@
+# Keep the Next.js image tight. node_modules + .next get rebuilt inside the
+# image; we never want to copy the host's versions in.
+
+node_modules/
+.next/
+out/
+.turbo/
+
+# Local env files — secrets are injected by the platform at runtime.
+.env
+.env.*
+!.env.example
+
+# Editor / OS noise
+.vscode/
+.idea/
+.DS_Store
+*.swp
+
+# Git
+.git/
+.gitignore
+
+# Docs / non-runtime files
+README.md
+*.md

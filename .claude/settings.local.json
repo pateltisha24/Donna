@@ -37,7 +37,8 @@
       "Bash(curl -s -X POST http://localhost:8000/auth/login -H 'Content-Type: application/json' -d '{\"email\":\"tisha@example.com\",\"password\":\"wrong\"}' -w '%{http_code}\\\\n')",
       "Bash(grep -q '^\\\\.env\\\\.local$' /Users/tisha/Projects/Donna/.gitignore)",
       "Bash(curl -s -o /tmp/sigin.html -w '%{http_code}\\\\n' 'http://localhost:3000/?login=open')",
-      "Bash(python3 -c \"import json,sys; d=json.load\\(sys.stdin\\); [print\\(f'  - {c[\\\\\"title\\\\\"]}'\\) for c in d['chats']]\")"
+      "Bash(python3 -c \"import json,sys; d=json.load\\(sys.stdin\\); [print\\(f'  - {c[\\\\\"title\\\\\"]}'\\) for c in d['chats']]\")",
+      "Bash(curl -s http://localhost:3000/ -o /tmp/landing.html)"
     ]
   }
 }

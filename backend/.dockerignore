@@ -1,0 +1,46 @@
+# Keep the backend image tight — don't ship anything Render doesn't need at runtime.
+
+# Python bytecode + cache
+__pycache__/
+**/__pycache__/
+*.pyc
+*.pyo
+*.pyd
+
+# Tests + their caches (run them in CI, not in the runtime image)
+.pytest_cache/
+**/.pytest_cache/
+tests/
+htmlcov/
+.coverage
+.coverage.*
+
+# Local data — ChromaDB index + SQLite (legacy)
+data/
+*.db
+*.db-journal
+
+# Virtual environments
+.venv/
+venv/
+env/
+
+# Editor / OS noise
+.vscode/
+.idea/
+.DS_Store
+*.swp
+
+# Git
+.git/
+.gitignore
+.gitattributes
+
+# Docs / project files not needed at runtime
+README.md
+DEPLOY.md
+IMPROVEMENTS.md
+docker-compose.yml
+.env
+.env.*
+!.env.example
