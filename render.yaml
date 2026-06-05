@@ -6,8 +6,12 @@
 #   3. Set the secrets marked `sync: false` in the Render UI.
 #   4. Update CORS_ALLOW_ORIGINS once you know the final Vercel URL.
 #
-# Primary storage is MongoDB Atlas (set MONGODB_URI). The mounted disk only
-# holds Chroma's file-based semantic-recall index.
+# Primary storage is MongoDB Atlas (set MONGODB_URI).
+#
+# Free-tier note: Render no longer allows persistent disks on free services.
+# Chroma's semantic-recall index lives at /tmp/chroma — ephemeral, rebuilt on
+# every cold start. That's fine: /recall returns empty results when the index
+# is empty, and the rest of the app is fully durable in Mongo.
 
 services:
   - type: web
@@ -43,15 +47,10 @@ services:
       - key: CORS_ALLOW_ORIGINS
         value: https://donna.vercel.app,http://localhost:3000
 
-      # Chroma writes its index here (mapped to the persistent disk below).
+      # Chroma index (ephemeral on free tier — no persistent disk).
       - key: CHROMA_DB_PATH
-        value: /data/chroma
+        value: /tmp/chroma
 
       # Scheduler timezone. Switch to the user's tz before deploy.
       - key: SCHEDULER_TZ
         value: America/New_York
-
-    disk:
-      name: donna-data
-      mountPath: /data
-      sizeGB: 1
