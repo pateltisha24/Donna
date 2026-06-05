@@ -59,7 +59,10 @@
       "Bash(curl -s -o /dev/null -w 'frontend HTTP %{http_code}\\\\n' http://localhost:3000/app)",
       "Bash(curl -s -o /dev/null -w '  /chats  request __TRACKED_VAR__: %{time_total}s\\\\n' http://localhost:8000/chats -H 'X-User-Id: demo')",
       "Bash(curl -s -o /dev/null -w '  /tasks  request __TRACKED_VAR__: %{time_total}s\\\\n' http://localhost:8000/tasks?date=__CMDSUB_OUTPUT__ -H 'X-User-Id: demo')",
-      "Bash(npx tsc *)"
+      "Bash(npx tsc *)",
+      "Bash(git log *)",
+      "Bash(python3 -c \"import json,sys; d=json.load\\(sys.stdin\\); print\\('scripts:',json.dumps\\(d.get\\('scripts'\\),indent=2\\)\\)\")",
+      "Bash(curl -s -m 90 \"https://donna-backend.onrender.com/health\")"
     ]
   }
 }

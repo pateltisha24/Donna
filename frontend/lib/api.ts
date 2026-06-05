@@ -73,7 +73,7 @@ async function apiFetch(path: string, init: RequestInit = {}): Promise<Response>
   const userId = await getCurrentUserId();
   const headers = new Headers(init.headers || {});
   if (!headers.has("X-User-Id")) headers.set("X-User-Id", userId);
-  return apiFetch(`${path}`, { ...init, headers });
+  return fetch(`${API_URL}${path}`, { ...init, headers });
 }
 
 export interface Message {
