@@ -21,6 +21,8 @@ export function clearUserIdCache(): void {
   _userIdPromise = null;
 }
 
+type SessionLike = { user?: { email?: string | null } } | null;
+
 async function resolveUserId(): Promise<string> {
   try {
     if (typeof window === "undefined") return "demo";
@@ -32,10 +34,13 @@ async function resolveUserId(): Promise<string> {
     // Race the session call against a 1.5s deadline so the UI never hangs on
     // a slow / misconfigured auth endpoint. If it loses the race we fall back
     // to demo and the UI keeps moving; the next call may resolve the real id.
-    const session = await Promise.race<{ user?: { email?: string | null } } | null>([
-      getSession(),
-      new Promise((resolve) => setTimeout(() => resolve(null), 1500)),
-    ]);
+    const sessionPromise: Promise<SessionLike> = getSession()
+      .then((s) => (s as SessionLike) ?? null)
+      .catch(() => null);
+    const timeoutPromise: Promise<SessionLike> = new Promise((resolve) => {
+      setTimeout(() => resolve(null), 1500);
+    });
+    const session = await Promise.race([sessionPromise, timeoutPromise]);
     const email = session?.user?.email?.trim().toLowerCase();
     if (email) {
       try {
