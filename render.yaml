@@ -16,12 +16,12 @@
 services:
   - type: web
     name: donna-backend
-    env: docker
+    runtime: docker
     region: oregon
     plan: free
-    rootDir: backend
-    dockerfilePath: ../Dockerfile
-    dockerContext: backend
+    # Both paths are interpreted relative to the repo root.
+    dockerfilePath: ./backend/Dockerfile
+    dockerContext: ./backend
     healthCheckPath: /health
     autoDeploy: true
 
