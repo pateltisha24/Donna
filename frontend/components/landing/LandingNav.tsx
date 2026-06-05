@@ -10,31 +10,26 @@ import { LoginModal } from "@/components/auth/LoginModal";
 
 const GITHUB_URL = "https://github.com/pateltisha24/Donna";
 
-/** Reads ?login=open and ?signedOut=1 to auto-open the modal after sign-out. */
+/** Reads ?login=open to auto-open the login modal (used by the "Sign in" links). */
 function useAutoOpenLogin() {
   const [open, setOpen] = React.useState(false);
-  const [persistent, setPersistent] = React.useState(false);
 
   React.useEffect(() => {
     // Read directly from window.location — useSearchParams() can hand back
     // an empty value on first render when the route is statically optimised.
     const url = new URL(window.location.href);
-    const wantsLogin = url.searchParams.get("login") === "open";
-    const signedOut = url.searchParams.get("signedOut") === "1";
-    if (wantsLogin || signedOut) {
+    if (url.searchParams.get("login") === "open") {
       setOpen(true);
-      setPersistent(signedOut);
       url.searchParams.delete("login");
-      url.searchParams.delete("signedOut");
       window.history.replaceState({}, "", url.toString());
     }
   }, []);
 
-  return { open, setOpen, persistent };
+  return { open, setOpen };
 }
 
 export function LandingNav() {
-  const { open, setOpen, persistent } = useAutoOpenLogin();
+  const { open, setOpen } = useAutoOpenLogin();
   const { data: session, status } = useSession();
   const isAuthed = status === "authenticated" && !!session?.user;
 
@@ -71,7 +66,7 @@ export function LandingNav() {
         )}
       </nav>
 
-      <LoginModal open={open} onOpenChange={setOpen} persistent={persistent} />
+      <LoginModal open={open} onOpenChange={setOpen} />
     </>
   );
 }

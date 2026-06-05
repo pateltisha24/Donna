@@ -90,9 +90,9 @@ export default function SettingsPage() {
       localStorage.removeItem("donna_user");
     } catch {}
     if (session?.user) {
-      await signOut({ callbackUrl: "/?signedOut=1" });
+      await signOut({ callbackUrl: "/" });
     } else {
-      router.push("/?signedOut=1");
+      router.push("/");
     }
   };
 

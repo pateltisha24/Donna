@@ -43,10 +43,10 @@ export function ProfileMenu() {
     } catch {}
     if (isAuthed) {
       // Bring the user back to the landing with the modal forced open.
-      await signOut({ callbackUrl: "/?signedOut=1" });
+      await signOut({ callbackUrl: "/" });
     } else {
       // Demo user — clear local marker and bounce to landing modal.
-      router.push("/?signedOut=1");
+      router.push("/");
     }
   };
 
