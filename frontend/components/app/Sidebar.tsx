@@ -4,16 +4,16 @@ import * as React from "react";
 import Link from "next/link";
 import { useRouter, usePathname } from "next/navigation";
 import {
-  BarChart3,
-  Calendar,
-  CheckSquare,
+  CalendarDays,
+  LayoutDashboard,
+  LineChart,
   MessageSquare,
   MoreHorizontal,
   Pencil,
   Plus,
+  Settings,
   Sparkles,
   Trash2,
-  Zap,
 } from "lucide-react";
 import * as DropdownMenu from "@radix-ui/react-dropdown-menu";
 import { toast } from "sonner";
@@ -22,14 +22,17 @@ import { DonnaAvatar } from "@/components/ui/avatar";
 import { cn } from "@/lib/utils";
 import { useChats } from "@/lib/useChats";
 
-const TOOL_NAV = [
-  { label: "Schedule", href: "/app?panel=schedule", icon: Calendar },
-  { label: "Tasks", href: "/app?panel=tasks", icon: CheckSquare },
-  { label: "Insights", href: "/app?panel=insights", icon: BarChart3 },
-  { label: "Emergency Replan", href: "/app?action=emergency", icon: Zap },
+// Top-level product destinations. `match` decides the active state so nested
+// routes (e.g. /app/chat?action=...) still highlight the right item.
+const PRIMARY_NAV = [
+  { label: "Today", href: "/app", icon: LayoutDashboard, match: (p: string) => p === "/app" },
+  { label: "Chat", href: "/app/chat", icon: MessageSquare, match: (p: string) => p.startsWith("/app/chat") },
+  { label: "Calendar", href: "/app/calendar", icon: CalendarDays, match: (p: string) => p.startsWith("/app/calendar") },
+  { label: "Productivity", href: "/app/productivity", icon: LineChart, match: (p: string) => p.startsWith("/app/productivity") },
 ] as const;
 
 export function Sidebar({ className }: { className?: string }) {
+  const pathname = usePathname();
   return (
     <aside
       className={cn(
@@ -48,19 +51,31 @@ export function Sidebar({ className }: { className?: string }) {
         </div>
       </div>
 
+      {/* Primary destinations */}
+      <nav className="px-3 pt-3 pb-2">
+        <ul className="space-y-0.5">
+          {PRIMARY_NAV.map((item) => (
+            <NavLink key={item.label} {...item} active={item.match(pathname)} />
+          ))}
+        </ul>
+      </nav>
+
+      <div className="mx-3 border-t border-border" />
+
       {/* New chat button */}
       <NewChatButton />
 
       {/* Chats list (takes the bulk of the sidebar) */}
       <ChatList />
 
-      {/* Tools — sits at the bottom of the sidebar */}
+      {/* Settings — pinned to the bottom */}
       <nav className="px-3 py-3 border-t border-border">
-        <ul className="space-y-0.5">
-          {TOOL_NAV.map((item) => (
-            <ToolLink key={item.label} {...item} />
-          ))}
-        </ul>
+        <NavLink
+          label="Settings"
+          href="/app/settings"
+          icon={Settings}
+          active={pathname.startsWith("/app/settings")}
+        />
       </nav>
     </aside>
   );
@@ -74,32 +89,43 @@ function SectionLabel({ children }: { children: React.ReactNode }) {
   );
 }
 
-function ToolLink({
+function NavLink({
   label,
   href,
   icon: Icon,
+  active,
 }: {
   label: string;
   href: string;
   icon: React.ComponentType<{ className?: string }>;
+  active: boolean;
 }) {
-  const pathname = usePathname();
-  const active = pathname === href.split("?")[0];
   return (
-    <li>
-      <Link
-        href={href}
+    <Link
+      href={href}
+      aria-current={active ? "page" : undefined}
+      className={cn(
+        "group relative flex items-center gap-3 px-3 py-2 rounded-lg text-sm font-medium transition-colors",
+        active
+          ? "bg-accent text-accent-foreground"
+          : "text-muted-foreground hover:text-foreground hover:bg-accent/40"
+      )}
+    >
+      {/* active accent bar */}
+      <span
         className={cn(
-          "flex items-center gap-3 px-3 py-1.5 rounded-md text-sm transition-colors",
-          active
-            ? "bg-accent/70 text-foreground"
-            : "text-muted-foreground hover:text-foreground hover:bg-accent/40"
+          "absolute left-0 top-1.5 bottom-1.5 w-0.5 rounded-full bg-primary transition-opacity",
+          active ? "opacity-100" : "opacity-0"
         )}
-      >
-        <Icon className="h-4 w-4 shrink-0 text-muted-foreground/80" />
-        <span className="truncate">{label}</span>
-      </Link>
-    </li>
+      />
+      <Icon
+        className={cn(
+          "h-4 w-4 shrink-0 transition-colors",
+          active ? "text-primary" : "text-muted-foreground/80 group-hover:text-foreground"
+        )}
+      />
+      <span className="truncate">{label}</span>
+    </Link>
   );
 }
 
@@ -117,7 +143,7 @@ function NewChatButton() {
     setBusy(true);
     try {
       await newChat();
-      router.push("/app");
+      router.push("/app/chat");
     } catch (e) {
       console.error(e);
       toast.error("Couldn't start a new chat.");
@@ -152,7 +178,7 @@ function ChatList() {
 
   const select = (id: string) => {
     setActiveId(id);
-    if (pathname !== "/app") router.push("/app");
+    if (pathname !== "/app/chat") router.push("/app/chat");
   };
 
   return (
@@ -171,7 +197,7 @@ function ChatList() {
               key={c.id}
               id={c.id}
               title={c.title}
-              active={c.id === activeId && pathname === "/app"}
+              active={c.id === activeId && pathname.startsWith("/app/chat")}
               onSelect={() => select(c.id)}
             />
           ))}

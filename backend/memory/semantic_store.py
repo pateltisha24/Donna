@@ -88,18 +88,27 @@ class SemanticStore:
         role: str,
         content: str,
         message_id: Optional[str] = None,
+        user_id: str = "default",
     ) -> None:
-        """Index a single message. Silent no-op if the store is disabled."""
+        """Index a single message. Silent no-op if the store is disabled.
+
+        Every document is tagged with `user_id` so `recall()` can scope results
+        to one person — recall must never surface another user's history.
+        """
         if not content or not content.strip():
             return
         if not self._ensure_ready():
             return
         try:
-            mid = message_id or f"{session_id}-{datetime.utcnow().timestamp()}"
+            # Include role in the fallback id: index_message is called twice per
+            # turn (user + assistant) and a bare session+timestamp id can collide
+            # at microsecond resolution, silently overwriting one document.
+            mid = message_id or f"{session_id}-{role}-{datetime.utcnow().timestamp()}"
             self._collection.add(  # type: ignore[union-attr]
                 ids=[mid],
                 documents=[content],
                 metadatas=[{
+                    "user_id": user_id,
                     "session_id": session_id,
                     "role": role,
                     "ts": datetime.utcnow().isoformat(),
@@ -108,18 +117,25 @@ class SemanticStore:
         except Exception as e:  # noqa: BLE001
             logger.debug("index_message failed: %s", e)
 
-    def recall(self, query: str, limit: int = 5) -> list[dict[str, Any]]:
+    def recall(
+        self, query: str, limit: int = 5, user_id: Optional[str] = None
+    ) -> list[dict[str, Any]]:
         """
         Semantic search over indexed messages. Returns a list of dicts:
         [{document, role, session_id, ts, score}]. Empty list on any error.
+
+        When `user_id` is given, results are filtered to that user only.
         """
         if not self._ensure_ready():
             return []
         try:
-            result = self._collection.query(  # type: ignore[union-attr]
-                query_texts=[query],
-                n_results=max(1, min(limit, 20)),
-            )
+            query_kwargs: dict[str, Any] = {
+                "query_texts": [query],
+                "n_results": max(1, min(limit, 20)),
+            }
+            if user_id is not None:
+                query_kwargs["where"] = {"user_id": user_id}
+            result = self._collection.query(**query_kwargs)  # type: ignore[union-attr]
             docs = (result.get("documents") or [[]])[0]
             metas = (result.get("metadatas") or [[]])[0]
             dists = (result.get("distances") or [[]])[0]

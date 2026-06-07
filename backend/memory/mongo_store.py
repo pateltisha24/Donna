@@ -328,6 +328,122 @@ class MongoStore:
         rate = round(done / total, 3) if total else 0.0
         return {"days": per_day, "total": total, "done": done, "completion_rate": rate}
 
+    def insights(self, days: int = 140, end: Optional[str] = None) -> dict:
+        """
+        Rich productivity analytics over a window, for the Productivity page.
+
+        Returns:
+          - `daily`:    dense per-day series (total, done, planned_min, focus_min)
+                        — the source for the contribution heatmap.
+          - `categories`: time-by-tag breakdown (first tag, or "Untagged"), so the
+                        user can see *where* their time goes.
+          - `summary`:  totals, completion rate, focus minutes, active days,
+                        current streak (consecutive recent days with a completion),
+                        and the most-productive day.
+
+        One aggregation for the daily series + one for categories — O(1) round
+        trips regardless of window size, unlike completion_stats' per-day loop.
+        """
+        end_date = date.fromisoformat(end) if end else date.today()
+        start_date = end_date - timedelta(days=days - 1)
+        start_s, end_s = start_date.isoformat(), end_date.isoformat()
+        col = self._col("tasks")
+        match = {
+            "user_id": self.user_id,
+            "recurrence": "none",
+            "date_assigned": {"$gte": start_s, "$lte": end_s},
+        }
+
+        done_cond = {"$eq": ["$status", "done"]}
+        dur = {"$ifNull": ["$duration_estimate", 0]}
+
+        daily_rows = {
+            r["_id"]: r
+            for r in col.aggregate([
+                {"$match": match},
+                {"$group": {
+                    "_id": "$date_assigned",
+                    "total": {"$sum": 1},
+                    "done": {"$sum": {"$cond": [done_cond, 1, 0]}},
+                    "planned_min": {"$sum": dur},
+                    "focus_min": {"$sum": {"$cond": [done_cond, dur, 0]}},
+                }},
+            ])
+        }
+
+        daily = []
+        for i in range(days - 1, -1, -1):
+            d = (end_date - timedelta(days=i)).isoformat()
+            r = daily_rows.get(d)
+            daily.append({
+                "date": d,
+                "total": r["total"] if r else 0,
+                "done": r["done"] if r else 0,
+                "planned_min": r["planned_min"] if r else 0,
+                "focus_min": r["focus_min"] if r else 0,
+            })
+
+        categories = [
+            {"name": r["_id"], "count": r["count"], "done": r["done"], "minutes": r["minutes"]}
+            for r in col.aggregate([
+                {"$match": match},
+                {"$project": {
+                    "status": 1,
+                    "duration_estimate": 1,
+                    # Bucket by the first tag; tagless tasks fall into "Untagged".
+                    "tag": {"$cond": [
+                        {"$gt": [{"$size": {"$ifNull": ["$tags", []]}}, 0]},
+                        {"$arrayElemAt": ["$tags", 0]},
+                        "Untagged",
+                    ]},
+                }},
+                {"$group": {
+                    "_id": "$tag",
+                    "count": {"$sum": 1},
+                    "done": {"$sum": {"$cond": [done_cond, 1, 0]}},
+                    "minutes": {"$sum": dur},
+                }},
+                {"$sort": {"minutes": -1}},
+            ])
+        ]
+
+        total = sum(d["total"] for d in daily)
+        done = sum(d["done"] for d in daily)
+        focus = sum(d["focus_min"] for d in daily)
+        active_days = sum(1 for d in daily if d["total"] > 0)
+
+        # Current streak: consecutive most-recent days with at least one
+        # completion. Today is allowed to be "not done yet" — an empty *today*
+        # doesn't break the streak (we just start counting from yesterday),
+        # otherwise the streak would reset to 0 every morning.
+        streak = 0
+        for idx, d in enumerate(reversed(daily)):
+            if d["done"] > 0:
+                streak += 1
+            elif idx == 0:
+                continue  # today isn't over yet
+            else:
+                break
+
+        best = max(daily, key=lambda d: d["done"], default=None)
+        best_day = best["date"] if best and best["done"] > 0 else None
+
+        return {
+            "range": {"start": start_s, "end": end_s, "days": days},
+            "daily": daily,
+            "categories": categories,
+            "summary": {
+                "total": total,
+                "done": done,
+                "completion_rate": round(done / total, 3) if total else 0.0,
+                "focus_minutes": focus,
+                "active_days": active_days,
+                "current_streak": streak,
+                "best_day": best_day,
+                "best_day_done": best["done"] if best else 0,
+            },
+        }
+
     def get_tasks_by_status(self, status: TaskStatus, date: Optional[str] = None) -> list[Task]:
         query: dict = {"user_id": self.user_id, "status": status.value}
         if date:

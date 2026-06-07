@@ -331,6 +331,17 @@ async def analytics(
         raise HTTPException(status_code=500, detail=str(e))
 
 
+@router.get("/insights")
+async def insights(
+    days: int = Query(default=140, ge=1, le=180),
+    store: MongoStore = Depends(get_store),
+):
+    try:
+        return store.insights(days=days)
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+
 # ---------------------------------------------------------------------------
 # Events
 # ---------------------------------------------------------------------------
@@ -342,10 +353,11 @@ def _event_to_dict(e) -> dict:
 @router.get("/events")
 async def get_events(
     days: int = Query(default=7, ge=1, le=60),
+    start: str = Query(default=None),
     store: MongoStore = Depends(get_store),
 ):
     try:
-        return [_event_to_dict(e) for e in store.get_upcoming_events(days=days)]
+        return [_event_to_dict(e) for e in store.get_upcoming_events(days=days, start=start)]
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
 

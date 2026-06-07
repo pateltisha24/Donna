@@ -1,7 +1,8 @@
 "use client";
 
 import * as React from "react";
-import { Trash2, Download, Calendar, ListTodo, BarChart3 } from "lucide-react";
+import Link from "next/link";
+import { Trash2, Download, Calendar, ListTodo, LineChart } from "lucide-react";
 import {
   Sheet,
   SheetContent,
@@ -16,16 +17,14 @@ import { ScrollArea } from "@/components/ui/scroll-area";
 import {
   calendarIcsUrl,
   deleteEvent,
-  getAnalytics,
   getEvents,
   searchTasks,
-  type Analytics,
   type CalEvent,
   type Task,
 } from "@/lib/api";
 import { cn, formatDayLabel } from "@/lib/utils";
 
-type Tab = "schedule" | "tasks" | "insights";
+type Tab = "schedule" | "tasks";
 
 interface RightPanelProps {
   open: boolean;
@@ -61,15 +60,12 @@ export function RightPanel({ open, onOpenChange, initialTab = "schedule" }: Righ
         </SheetHeader>
         <div className="px-5 pt-4">
           <Tabs value={tab} onValueChange={(v) => setTab(v as Tab)}>
-            <TabsList className="grid grid-cols-3 w-full">
+            <TabsList className="grid grid-cols-2 w-full">
               <TabsTrigger value="schedule" className="gap-1.5">
                 <Calendar className="h-3.5 w-3.5" /> Schedule
               </TabsTrigger>
               <TabsTrigger value="tasks" className="gap-1.5">
                 <ListTodo className="h-3.5 w-3.5" /> Tasks
-              </TabsTrigger>
-              <TabsTrigger value="insights" className="gap-1.5">
-                <BarChart3 className="h-3.5 w-3.5" /> Insights
               </TabsTrigger>
             </TabsList>
             <TabsContent value="schedule" className="mt-4">
@@ -78,10 +74,17 @@ export function RightPanel({ open, onOpenChange, initialTab = "schedule" }: Righ
             <TabsContent value="tasks" className="mt-4">
               <TaskView active={open && tab === "tasks"} />
             </TabsContent>
-            <TabsContent value="insights" className="mt-4">
-              <InsightsView active={open && tab === "insights"} />
-            </TabsContent>
           </Tabs>
+
+          {/* Insights moved to its own page — link out instead of duplicating. */}
+          <Link
+            href="/app/productivity"
+            onClick={() => onOpenChange(false)}
+            className="mt-4 flex items-center gap-2 rounded-lg border border-border bg-card/50 px-3 py-2.5 text-sm text-muted-foreground hover:text-foreground hover:border-primary/40 transition-colors"
+          >
+            <LineChart className="h-4 w-4 text-primary" />
+            View your full productivity insights
+          </Link>
         </div>
       </SheetContent>
     </Sheet>
@@ -288,72 +291,3 @@ function TaskView({ active }: { active: boolean }) {
   );
 }
 
-// ---------------------------------------------------------------------------
-// Insights
-// ---------------------------------------------------------------------------
-
-function InsightsView({ active }: { active: boolean }) {
-  const [analytics, setAnalytics] = React.useState<Analytics | null>(null);
-
-  React.useEffect(() => {
-    if (active) {
-      getAnalytics(7).then(setAnalytics).catch(() => setAnalytics(null));
-    }
-  }, [active]);
-
-  if (!analytics) {
-    return <p className="text-sm text-muted-foreground text-center py-6">Loading…</p>;
-  }
-
-  const maxTotal = Math.max(1, ...analytics.days.map((d) => d.total));
-  const pct = Math.round(analytics.completion_rate * 100);
-
-  return (
-    <div className="flex flex-col gap-5 pb-6">
-      <div className="grid grid-cols-3 gap-2">
-        <Stat label="Tasks" value={analytics.total} />
-        <Stat label="Done" value={analytics.done} />
-        <Stat label="Rate" value={`${pct}%`} accent />
-      </div>
-
-      <div>
-        <p className="text-xs text-muted-foreground mb-2">Last {analytics.days.length} days</p>
-        <div className="flex items-end gap-1.5 h-32 px-1">
-          {analytics.days.map((d) => (
-            <div key={d.date} className="flex-1 flex flex-col items-center justify-end h-full gap-1">
-              <div className="w-full flex flex-col justify-end h-full">
-                <div
-                  className="w-full rounded-t-md relative bg-muted overflow-hidden"
-                  style={{ height: `${Math.max(2, (d.total / maxTotal) * 100)}%` }}
-                >
-                  <div
-                    className="absolute bottom-0 left-0 right-0 rounded-t-md bg-gradient-to-t from-primary to-[hsl(280_80%_70%)]"
-                    style={{ height: d.total ? `${(d.done / d.total) * 100}%` : "0%" }}
-                  />
-                </div>
-              </div>
-              <span className="text-[9px] text-muted-foreground">{d.date.slice(5)}</span>
-            </div>
-          ))}
-        </div>
-        <p className="text-[10px] text-muted-foreground mt-2">
-          Filled = completed · Bar height = total scheduled
-        </p>
-      </div>
-    </div>
-  );
-}
-
-function Stat({ label, value, accent }: { label: string; value: number | string; accent?: boolean }) {
-  return (
-    <div
-      className={cn(
-        "rounded-lg border border-border bg-card px-3 py-2.5 text-center",
-        accent && "border-primary/30 bg-accent/40"
-      )}
-    >
-      <div className={cn("text-xl font-semibold", accent && "text-primary")}>{value}</div>
-      <div className="text-[10px] uppercase tracking-wider text-muted-foreground">{label}</div>
-    </div>
-  );
-}

@@ -107,6 +107,15 @@ const config: Config = {
         "gradient-radial": "radial-gradient(var(--tw-gradient-stops))",
         "gradient-conic": "conic-gradient(from 180deg at 50% 50%, var(--tw-gradient-stops))",
       },
+      // 3-tier elevation system so chat / sidebar / cards read as distinct planes.
+      // Tuned to be subtle in dark mode and crisp in light mode.
+      boxShadow: {
+        "elev-1": "0 1px 2px 0 rgb(0 0 0 / 0.06), 0 1px 3px 0 rgb(0 0 0 / 0.10)",
+        "elev-2":
+          "0 2px 4px -1px rgb(0 0 0 / 0.10), 0 6px 16px -4px rgb(0 0 0 / 0.14)",
+        "elev-3":
+          "0 8px 28px -6px rgb(0 0 0 / 0.22), 0 2px 8px -2px rgb(0 0 0 / 0.14)",
+      },
     },
   },
   plugins: [require("tailwindcss-animate")],

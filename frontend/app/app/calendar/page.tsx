@@ -1,10 +1,10 @@
 import { Suspense } from "react";
-import { TodayView } from "@/components/app/TodayView";
+import { CalendarView } from "@/components/app/CalendarView";
 
-export default function AppPage() {
+export default function CalendarPage() {
   return (
     <Suspense fallback={<div className="flex items-center justify-center h-full text-sm text-muted-foreground">Loading…</div>}>
-      <TodayView />
+      <CalendarView />
     </Suspense>
   );
 }

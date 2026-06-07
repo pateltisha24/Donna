@@ -4,10 +4,10 @@ import * as React from "react";
 import Link from "next/link";
 import {
   MessageSquare,
-  Calendar,
-  CheckSquare,
-  BarChart3,
-  Zap,
+  CalendarDays,
+  LayoutDashboard,
+  LineChart,
+  Settings,
   Info,
   Menu,
 } from "lucide-react";
@@ -22,11 +22,11 @@ import {
 import { DonnaAvatar } from "@/components/ui/avatar";
 
 const NAV = [
-  { label: "Chat", href: "/app", icon: MessageSquare },
-  { label: "Schedule", href: "/app?panel=schedule", icon: Calendar },
-  { label: "Tasks", href: "/app?panel=tasks", icon: CheckSquare },
-  { label: "Insights", href: "/app?panel=insights", icon: BarChart3 },
-  { label: "Emergency", href: "/app?action=emergency", icon: Zap },
+  { label: "Today", href: "/app", icon: LayoutDashboard },
+  { label: "Chat", href: "/app/chat", icon: MessageSquare },
+  { label: "Calendar", href: "/app/calendar", icon: CalendarDays },
+  { label: "Productivity", href: "/app/productivity", icon: LineChart },
+  { label: "Settings", href: "/app/settings", icon: Settings },
   { label: "About", href: "/about", icon: Info },
 ];
 

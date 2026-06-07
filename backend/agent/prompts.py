@@ -25,7 +25,7 @@ You have access to their tasks for today:
 
 Their calendar for today:
 {todays_events}
-
+{memories}
 Current time: {current_time}
 
 Your job is to manage their day so they can focus on doing the work. Keep \
@@ -59,17 +59,30 @@ def _fmt_events(events: list) -> str:
     return "\n".join(lines)
 
 
+def _fmt_memories(memories: str) -> str:
+    """Wrap recalled snippets in a labelled block, or collapse to nothing."""
+    if not memories or not memories.strip():
+        return ""
+    return (
+        "\nRelevant things from past conversations with this person "
+        "(use them to be specific and personal; don't quote them verbatim):\n"
+        f"{memories.strip()}\n"
+    )
+
+
 def build_system_prompt(
     profile: UserProfile,
     todays_tasks: list[Task],
     extra: str = "",
     todays_events: list = None,
+    memories: str = "",
 ) -> str:
     current_time = datetime.now().strftime("%A, %B %d %Y at %H:%M")
     base = BASE_SYSTEM.format(
         user_profile=profile.to_prompt_str(),
         todays_tasks=_fmt_tasks(todays_tasks),
         todays_events=_fmt_events(todays_events or []),
+        memories=_fmt_memories(memories),
         current_time=current_time,
     )
     if extra:

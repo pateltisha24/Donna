@@ -21,7 +21,7 @@ const ACTIONS: {
   accent: string;
 }[] = [
   { id: "morning_briefing", label: "Morning Briefing", short: "Morning", icon: Sun, accent: "hsl(38 92% 55%)" },
-  { id: "what_now", label: "What now?", short: "What now?", icon: ListTodo, accent: "hsl(252 80% 68%)" },
+  { id: "what_now", label: "What now?", short: "What now?", icon: ListTodo, accent: "hsl(160 55% 50%)" },
   { id: "emergency", label: "Emergency Replan", short: "Emergency", icon: Zap, accent: "hsl(0 75% 60%)" },
   { id: "eod_wrap", label: "EOD Wrap", short: "EOD", icon: Moon, accent: "hsl(220 70% 65%)" },
 ];

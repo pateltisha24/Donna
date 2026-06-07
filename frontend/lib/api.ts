@@ -224,6 +224,44 @@ export async function getAnalytics(days = 7): Promise<Analytics> {
   return res.json();
 }
 
+export interface InsightDay {
+  date: string;
+  total: number;
+  done: number;
+  planned_min: number;
+  focus_min: number;
+}
+
+export interface InsightCategory {
+  name: string;
+  count: number;
+  done: number;
+  minutes: number;
+}
+
+export interface Insights {
+  range: { start: string; end: string; days: number };
+  daily: InsightDay[];
+  categories: InsightCategory[];
+  summary: {
+    total: number;
+    done: number;
+    completion_rate: number;
+    focus_minutes: number;
+    active_days: number;
+    current_streak: number;
+    best_day: string | null;
+    best_day_done: number;
+  };
+}
+
+/** Rich productivity analytics (heatmap + time-by-category + summary). */
+export async function getInsights(days = 140): Promise<Insights | null> {
+  const res = await apiFetch(`/insights?days=${days}`);
+  if (!res.ok) return null;
+  return res.json();
+}
+
 /** Upload a screenshot or .ics file; backend parses it into events. */
 export async function uploadCalendarFile(
   file: File
@@ -235,9 +273,11 @@ export async function uploadCalendarFile(
   return res.json();
 }
 
-/** Upcoming calendar events over the next `days` days. */
-export async function getEvents(days = 7): Promise<CalEvent[]> {
-  const res = await apiFetch(`/events?days=${days}`);
+/** Upcoming calendar events over `days` days, optionally from a `start` date. */
+export async function getEvents(days = 7, start?: string): Promise<CalEvent[]> {
+  const qs = new URLSearchParams({ days: String(days) });
+  if (start) qs.set("start", start);
+  const res = await apiFetch(`/events?${qs.toString()}`);
   if (!res.ok) throw new Error(`API error: ${res.status}`);
   return res.json();
 }

@@ -104,6 +104,39 @@ def get_chroma(state: dict | None = None) -> ChromaStore:
     return ChromaStore(get_sqlite(state))
 
 
+def _recall_memories(state: dict, k: int = 4) -> str:
+    """
+    Retrieve snippets from THIS user's past conversations that are semantically
+    relevant to their current message, formatted for prompt injection.
+
+    This is the retrieval half of Donna's long-term memory: the profile gives
+    her stable facts, this gives her relevant *moments*. Failure is silent —
+    personalization is a bonus, never a blocker on the chat path.
+    """
+    query = (state.get("user_message") or "").strip()
+    if len(query) < 3:
+        return ""
+    try:
+        from memory.semantic_store import SemanticStore
+        hits = SemanticStore().recall(
+            query, limit=k, user_id=state.get("user_id") or "default"
+        )
+    except Exception as e:  # noqa: BLE001
+        logger.debug("recall_memories skipped: %s", e)
+        return ""
+
+    lines: list[str] = []
+    for h in hits:
+        doc = (h.get("document") or "").strip().replace("\n", " ")
+        if not doc:
+            continue
+        if len(doc) > 200:
+            doc = doc[:200] + "…"
+        who = "They said" if h.get("role") == "user" else "Donna said"
+        lines.append(f"  - {who}: {doc}")
+    return "\n".join(lines)
+
+
 # ---------------------------------------------------------------------------
 # Helpers: build tasks + recover malformed control blocks via one retry
 # ---------------------------------------------------------------------------
@@ -299,7 +332,7 @@ def morning_briefing(state: dict) -> dict:
     events = sqlite.get_events_for_date(today_str())
 
     from agent.prompts import MORNING_BRIEFING_EXTRA
-    system = build_system_prompt(profile, tasks, extra=MORNING_BRIEFING_EXTRA, todays_events=events)
+    system = build_system_prompt(profile, tasks, extra=MORNING_BRIEFING_EXTRA, todays_events=events, memories=_recall_memories(state))
 
     history = state.get("history", [])
     user_msg = state.get("user_message", "")
@@ -326,7 +359,7 @@ def task_input(state: dict) -> dict:
     tasks = sqlite.get_tasks_for_date(today_str())
 
     from agent.prompts import TASK_INPUT_EXTRA
-    system = build_system_prompt(profile, tasks, extra=TASK_INPUT_EXTRA)
+    system = build_system_prompt(profile, tasks, extra=TASK_INPUT_EXTRA, memories=_recall_memories(state))
 
     history = state.get("history", [])
     user_msg = state.get("user_message", "")
@@ -380,7 +413,7 @@ def task_update(state: dict) -> dict:
     tasks = sqlite.get_tasks_for_date(today_str())
 
     from agent.prompts import TASK_UPDATE_EXTRA
-    system = build_system_prompt(profile, tasks, extra=TASK_UPDATE_EXTRA)
+    system = build_system_prompt(profile, tasks, extra=TASK_UPDATE_EXTRA, memories=_recall_memories(state))
 
     # Inject task IDs into system so LLM can reference them
     task_id_context = "\n\nTask IDs for today:\n" + "\n".join(
@@ -432,7 +465,7 @@ def emergency_replan(state: dict) -> dict:
     tasks = sqlite.get_tasks_for_date(today_str())
 
     from agent.prompts import EMERGENCY_REPLAN_EXTRA
-    system = build_system_prompt(profile, tasks, extra=EMERGENCY_REPLAN_EXTRA)
+    system = build_system_prompt(profile, tasks, extra=EMERGENCY_REPLAN_EXTRA, memories=_recall_memories(state))
 
     history = state.get("history", [])
     user_msg = state.get("user_message", "")
@@ -460,7 +493,7 @@ def general_checkin(state: dict) -> dict:
     events = sqlite.get_events_for_date(today_str())
 
     from agent.prompts import GENERAL_CHECKIN_EXTRA
-    system = build_system_prompt(profile, tasks, extra=GENERAL_CHECKIN_EXTRA, todays_events=events)
+    system = build_system_prompt(profile, tasks, extra=GENERAL_CHECKIN_EXTRA, todays_events=events, memories=_recall_memories(state))
 
     history = state.get("history", [])
     user_msg = state.get("user_message", "")
@@ -679,16 +712,31 @@ def update_memory(state: dict) -> dict:
     """
     # Semantic indexing always runs — never gated, never expensive. Failure is
     # silent so a broken vector store can't break the chat path.
+    #
+    # CRITICAL: every document MUST be tagged with this user's id. recall() filters
+    # by user_id, so an untagged write (user_id="default") is invisible to a real
+    # logged-in user and personalization silently does nothing. We index BOTH the
+    # user's own words and Donna's reply — the user's words are the most valuable
+    # thing to recall later ("you mentioned you hate morning meetings").
     try:
         from memory.semantic_store import SemanticStore
+        store = SemanticStore()
+        uid = state.get("user_id") or "default"
+        sid = state.get("session_id", "default")
+
+        user_msg = (state.get("user_message") or "").strip()
+        if user_msg:
+            store.index_message(session_id=sid, role="user", content=user_msg, user_id=uid)
+
         history_for_index = state.get("history", [])
         if history_for_index:
             last = history_for_index[-1]
             if last.get("role") == "assistant" and last.get("content"):
-                SemanticStore().index_message(
-                    session_id=state.get("session_id", "default"),
+                store.index_message(
+                    session_id=sid,
                     role="assistant",
                     content=last["content"],
+                    user_id=uid,
                 )
     except Exception as e:  # noqa: BLE001
         logger.debug("semantic index skipped: %s", e)

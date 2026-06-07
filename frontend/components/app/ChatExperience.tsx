@@ -27,6 +27,10 @@ export function ChatExperience() {
   const params = useSearchParams();
   const panel = params.get("panel");
   const action = params.get("action");
+  const ask = params.get("ask");
+  // Guards so a prefilled prompt / emergency only fires once, even under
+  // React strict-mode double-invocation in dev.
+  const consumedParam = React.useRef(false);
 
   const { activeId, setActiveId, newChat, refresh, titleFromFirstMessage } = useChats();
   const chatId = activeId;
@@ -39,7 +43,7 @@ export function ChatExperience() {
   const [streamingIndex, setStreamingIndex] = React.useState<number | null>(null);
   const [waitingFirstToken, setWaitingFirstToken] = React.useState(false);
   const [panelOpen, setPanelOpen] = React.useState(false);
-  const [panelTab, setPanelTab] = React.useState<"schedule" | "tasks" | "insights">("schedule");
+  const [panelTab, setPanelTab] = React.useState<"schedule" | "tasks">("schedule");
 
   const scrollerRef = React.useRef<HTMLDivElement>(null);
   const bottomRef = React.useRef<HTMLDivElement>(null);
@@ -67,10 +71,10 @@ export function ChatExperience() {
 
   // ---- Open panel from URL param -----------------------------------------
   React.useEffect(() => {
-    if (panel === "schedule" || panel === "tasks" || panel === "insights") {
+    if (panel === "schedule" || panel === "tasks") {
       setPanelTab(panel);
       setPanelOpen(true);
-      router.replace("/app", { scroll: false });
+      router.replace("/app/chat", { scroll: false });
     }
   }, [panel, router]);
 
@@ -262,14 +266,21 @@ export function ChatExperience() {
     [isLoading, appendChunk, dropEmpty, ensureChat]
   );
 
-  // ---- Emergency action from URL ----------------------------------------
+  // ---- Emergency action / prefilled prompt from URL ----------------------
+  // Today's quick actions deep-link here with ?ask=… or ?action=emergency.
   React.useEffect(() => {
+    if (consumedParam.current) return;
     if (action === "emergency") {
+      consumedParam.current = true;
       runSend("Something urgent just came up. Help me replan my day.");
-      router.replace("/app", { scroll: false });
+      router.replace("/app/chat", { scroll: false });
+    } else if (ask) {
+      consumedParam.current = true;
+      runSend(ask);
+      router.replace("/app/chat", { scroll: false });
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [action]);
+  }, [action, ask]);
 
   const onQuick = (a: QuickAction) => {
     if (a === "morning_briefing" || a === "eod_wrap") runTriggerAction(a);

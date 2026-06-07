@@ -38,7 +38,7 @@ export function DonnaAvatar({ size = "md", className, animated = false }: DonnaA
     <Avatar
       size={size}
       className={cn(
-        "bg-gradient-to-br from-primary via-[hsl(280_80%_65%)] to-[hsl(252_85%_55%)] text-primary-foreground shadow-md shadow-primary/30",
+        "bg-gradient-to-br from-[hsl(40_92%_64%)] via-[hsl(26_84%_56%)] to-[hsl(14_72%_48%)] text-primary-foreground shadow-md shadow-primary/30",
         animated && "animate-glow",
         className
       )}

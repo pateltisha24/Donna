@@ -62,7 +62,17 @@
       "Bash(npx tsc *)",
       "Bash(git log *)",
       "Bash(python3 -c \"import json,sys; d=json.load\\(sys.stdin\\); print\\('scripts:',json.dumps\\(d.get\\('scripts'\\),indent=2\\)\\)\")",
-      "Bash(curl -s -m 90 \"https://donna-backend.onrender.com/health\")"
+      "Bash(curl -s -m 90 \"https://donna-backend.onrender.com/health\")",
+      "WebSearch",
+      "Bash(curl -s -H \"X-User-Id: demo\" \"http://localhost:8000/analytics?days=14\")",
+      "Bash(curl -s -H \"X-User-Id: demo\" \"http://localhost:8000/search\")",
+      "Bash(python3 -c \"import sys,json; d=json.load\\(sys.stdin\\); print\\('count:',len\\(d\\)\\); [print\\(' -',t['title'],'| tags:',t.get\\('tags'\\),'| dur:',t.get\\('duration_estimate'\\),'| status:',t.get\\('status'\\),'| date:',t.get\\('date_assigned'\\)\\) for t in d[:8]]\")",
+      "Bash(curl -s -H \"X-User-Id: demo\" \"http://localhost:8000/insights?days=140\")",
+      "Bash(python3 -c ' *)",
+      "Bash(python scripts/enrich_demo.py)",
+      "Bash(python3 -c \"import sys,json; s=json.load\\(sys.stdin\\)['summary']; print\\('streak:', s['current_streak'], '| completion:', round\\(s['completion_rate']*100\\),'% | focus_h:', round\\(s['focus_minutes']/60\\), '| active:', s['active_days'], '| best:', s['best_day']\\)\")",
+      "Bash(sed -n '1,40p')",
+      "Bash(awk '/def get_events_for_date/{f=1} f{print} /return/{if\\(f\\)c++} f&&c>=2{exit}' memory/mongo_store.py)"
     ]
   }
 }

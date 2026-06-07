@@ -11,6 +11,7 @@ import {
 } from "lucide-react";
 import { Badge } from "@/components/ui/badge";
 import { DonnaAvatar } from "@/components/ui/avatar";
+import { DonnaPortrait } from "@/components/ui/DonnaPortrait";
 import { GithubIcon } from "@/components/ui/icons";
 import { LandingNav, LandingCta } from "@/components/landing/LandingNav";
 
@@ -43,7 +44,14 @@ export default function LandingPage() {
           className="absolute top-1/3 left-1/2 w-[480px] h-[480px] bg-primary/20 rounded-full blur-3xl pointer-events-none [transform:translate3d(-50%,0,0)] will-change-transform"
         />
 
-        <div className="relative max-w-6xl mx-auto px-4 md:px-6 pt-20 pb-24 text-center">
+        <div className="relative max-w-6xl mx-auto px-4 md:px-6 pt-16 pb-24 text-center">
+          <div className="flex justify-center mb-7 animate-fade-in">
+            <div className="relative">
+              <div className="absolute inset-0 -z-10 rounded-full bg-primary/25 blur-2xl" aria-hidden />
+              <DonnaPortrait size={128} className="drop-shadow-xl" />
+            </div>
+          </div>
+
           <div className="inline-flex items-center gap-2 mb-6 px-3 py-1 rounded-full border border-border bg-card/60 backdrop-blur text-xs font-medium animate-fade-in">
             <Sparkles className="h-3 w-3 text-primary" />
             Multi-agent · LangGraph · Groq Llama 3.3 70B
