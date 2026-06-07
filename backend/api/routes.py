@@ -170,6 +170,7 @@ async def _run_and_stream(
 
     state["stream_cb"] = on_delta
     state["user_id"] = store.user_id  # nodes read this to build per-user stores
+    state["session_id"] = session_id  # so semantic indexing scopes to this chat
     history = state.get("history", [])
     holder: dict = {}
 

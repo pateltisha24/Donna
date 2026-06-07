@@ -27,6 +27,10 @@ class DonnaState(TypedDict, total=False):
     response: str
     next_node: str
     stream_cb: Optional[Callable[[str], None]]  # per-request token sink (not persisted)
+    # CRITICAL: these must be declared, or LangGraph strips them from the state
+    # before nodes run — silently defaulting every chat to the "default" user.
+    user_id: str
+    session_id: str
 
 
 # ---------------------------------------------------------------------------

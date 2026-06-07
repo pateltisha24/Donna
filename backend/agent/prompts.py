@@ -146,6 +146,22 @@ After the user confirms, end your message with a JSON block in this format:
 </TASKS_CONFIRMED>\
 """
 
+# Tool-calling variant: instead of embedding a JSON block in the reply, the model
+# calls the `create_tasks` tool once the user confirms. Confirm-first behaviour is
+# preserved — no tool call until the user has clearly said yes.
+TASK_INPUT_TOOL_EXTRA = """\
+CONTEXT: The user is telling you about tasks they want to track.
+
+- If they are still describing or you're not sure yet, DO NOT call any tool. \
+Reply naturally: restate the tasks you understood (title, estimated duration, \
+priority, and recurrence if it repeats) and ask them to confirm.
+- ONLY once the user has clearly confirmed, call the create_tasks tool with the \
+structured task list. Infer priority from context and their profile. For repeating \
+tasks set recurrence ("daily", "weekdays", or "weekly" with recurrence_days like \
+["mon","wed"]); otherwise "none". Default date_assigned to today unless they say \
+otherwise.\
+"""
+
 MORNING_BRIEFING_EXTRA = """\
 CONTEXT: This is the morning briefing. Greet the user with personality, give \
 a concise overview of today's tasks (max 5-6 lines), and reference one of \
@@ -204,6 +220,27 @@ After the user confirms, end your message with a JSON block:
 <EVENTS_CONFIRMED>
 [{"title": "...", "date": "YYYY-MM-DD", "start_time": "HH:MM", "end_time": "HH:MM", "location": "", "recurrence": "none", "recurrence_days": []}]
 </EVENTS_CONFIRMED>\
+"""
+
+# Tool-calling variants.
+CALENDAR_TOOL_EXTRA = """\
+CONTEXT: The user is talking about calendar events — meetings, classes, shifts, \
+or appointments at specific times.
+
+- If you're still clarifying, reply normally: restate the event(s) you understood \
+(title, date, start/end time, location, recurrence) and ask them to confirm. Do \
+NOT call a tool yet.
+- Once the user confirms, call the create_events tool. Capture title, date \
+(YYYY-MM-DD), start_time and end_time (HH:MM 24h), and location if mentioned. For \
+repeats set recurrence ("weekly" with recurrence_days like ["tue","fri"], \
+"weekdays", or "daily"); otherwise "none".\
+"""
+
+PROFILE_UPDATE_TOOL_EXTRA = """\
+CONTEXT: The user is sharing personal information about themselves. Acknowledge it \
+warmly and naturally, then continue. Whenever they reveal something worth \
+remembering, call the update_profile tool with ONLY the fields they actually \
+shared. If nothing new was shared, don't call the tool.\
 """
 
 INTENT_TO_EXTRA = {

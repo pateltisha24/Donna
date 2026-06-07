@@ -87,6 +87,179 @@ def call_llm(
     return "".join(chunks)
 
 
+def call_llm_with_tools(
+    messages: list[dict],
+    system_prompt: str,
+    tools: list[dict],
+    temperature: float = 0.3,
+):
+    """
+    Non-streaming call that lets the model decide whether to call a tool.
+
+    Returns the response message object, which carries either `.tool_calls`
+    (structured action requests) or `.content` (a plain reply). This is the
+    "decide" half of Donna's decide-then-narrate action loop — far more reliable
+    than parsing structured data back out of free-form text.
+    """
+    full_messages = [{"role": "system", "content": system_prompt}] + messages
+    response = _groq_client.chat.completions.create(
+        model="llama-3.3-70b-versatile",
+        messages=full_messages,
+        tools=tools,
+        tool_choice="auto",
+        temperature=temperature,
+        max_tokens=1024,
+    )
+    return response.choices[0].message
+
+
+# Tool schema mirrors the Task model so the model returns clean, typed args.
+CREATE_TASKS_TOOL = {
+    "type": "function",
+    "function": {
+        "name": "create_tasks",
+        "description": (
+            "Save one or more tasks to the user's task list. Only call this once "
+            "the user has clearly confirmed the task(s) they want to add."
+        ),
+        "parameters": {
+            "type": "object",
+            "properties": {
+                "tasks": {
+                    "type": "array",
+                    "items": {
+                        "type": "object",
+                        "properties": {
+                            "title": {"type": "string"},
+                            "description": {"type": "string"},
+                            "deadline": {"type": "string", "description": "ISO 8601 datetime, optional"},
+                            "duration_estimate": {"type": "integer", "description": "minutes, optional"},
+                            "priority": {"type": "string", "enum": ["high", "medium", "low"]},
+                            "date_assigned": {"type": "string", "description": "YYYY-MM-DD; defaults to today"},
+                            "recurrence": {"type": "string", "enum": ["none", "daily", "weekdays", "weekly"]},
+                            "recurrence_days": {
+                                "type": "array",
+                                "items": {"type": "string"},
+                                "description": 'lowercase 3-letter days, e.g. ["mon","wed"]',
+                            },
+                        },
+                        "required": ["title"],
+                    },
+                }
+            },
+            "required": ["tasks"],
+        },
+    },
+}
+
+
+MARK_DONE_TOOL = {
+    "type": "function",
+    "function": {
+        "name": "mark_tasks_done",
+        "description": (
+            "Mark one or more of today's tasks as completed. Use the task IDs "
+            "listed in the system context."
+        ),
+        "parameters": {
+            "type": "object",
+            "properties": {
+                "task_ids": {"type": "array", "items": {"type": "integer"}},
+            },
+            "required": ["task_ids"],
+        },
+    },
+}
+
+
+MOVE_TASK_TOOL = {
+    "type": "function",
+    "function": {
+        "name": "move_tasks",
+        "description": (
+            "Move one or more tasks to another day (defaults to tomorrow). Use the "
+            "task IDs listed in the system context."
+        ),
+        "parameters": {
+            "type": "object",
+            "properties": {
+                "task_ids": {"type": "array", "items": {"type": "integer"}},
+                "to_date": {"type": "string", "description": "YYYY-MM-DD; defaults to tomorrow"},
+            },
+            "required": ["task_ids"],
+        },
+    },
+}
+
+
+CREATE_EVENTS_TOOL = {
+    "type": "function",
+    "function": {
+        "name": "create_events",
+        "description": (
+            "Save one or more timed calendar events. Only call this once the user "
+            "has confirmed the event(s)."
+        ),
+        "parameters": {
+            "type": "object",
+            "properties": {
+                "events": {
+                    "type": "array",
+                    "items": {
+                        "type": "object",
+                        "properties": {
+                            "title": {"type": "string"},
+                            "date": {"type": "string", "description": "YYYY-MM-DD"},
+                            "start_time": {"type": "string", "description": "HH:MM 24h"},
+                            "end_time": {"type": "string", "description": "HH:MM 24h, optional"},
+                            "location": {"type": "string"},
+                            "recurrence": {"type": "string", "enum": ["none", "daily", "weekdays", "weekly"]},
+                            "recurrence_days": {
+                                "type": "array",
+                                "items": {"type": "string"},
+                                "description": 'lowercase 3-letter days, e.g. ["tue","fri"]',
+                            },
+                        },
+                        "required": ["title", "date", "start_time"],
+                    },
+                }
+            },
+            "required": ["events"],
+        },
+    },
+}
+
+
+UPDATE_PROFILE_TOOL = {
+    "type": "function",
+    "function": {
+        "name": "update_profile",
+        "description": (
+            "Save new facts the user shared about themselves. Include only the "
+            "fields they actually revealed."
+        ),
+        "parameters": {
+            "type": "object",
+            "properties": {
+                "name": {"type": "string"},
+                "occupation": {"type": "string"},
+                "institution": {"type": "string"},
+                "working_style": {"type": "string"},
+                "procrastination_patterns": {"type": "string"},
+                "wake_time": {"type": "string", "description": "HH:MM"},
+                "eod_time": {"type": "string", "description": "HH:MM"},
+                "known_people": {"type": "object", "description": "name -> relationship"},
+                "known_priorities": {"type": "array", "items": {"type": "string"}},
+                "preferences": {"type": "array", "items": {"type": "string"}},
+                "major_goals_short": {"type": "array", "items": {"type": "string"}},
+                "major_goals_long": {"type": "array", "items": {"type": "string"}},
+                "notes": {"type": "array", "items": {"type": "string"}},
+            },
+        },
+    },
+}
+
+
 # ---------------------------------------------------------------------------
 # Shared stores (singletons — initialised lazily so tests can mock them)
 # ---------------------------------------------------------------------------
@@ -353,6 +526,119 @@ def morning_briefing(state: dict) -> dict:
 # ---------------------------------------------------------------------------
 
 def task_input(state: dict) -> dict:
+    """
+    Add tasks via native tool-calling: the model decides (calls `create_tasks`
+    only after the user confirms), we execute against the store, then narrate a
+    streamed confirmation. Falls back to the control-token path if the tool pass
+    errors, so reliability only ever increases.
+    """
+    chroma = get_chroma(state)
+    sqlite = get_sqlite(state)
+    profile = chroma.get_profile()
+    tasks = sqlite.get_tasks_for_date(today_str())
+
+    from agent.prompts import TASK_INPUT_TOOL_EXTRA
+    system = build_system_prompt(
+        profile, tasks, extra=TASK_INPUT_TOOL_EXTRA, memories=_recall_memories(state)
+    )
+
+    history = state.get("history", [])
+    user_msg = state.get("user_message", "")
+    if user_msg:
+        history = history + [{"role": "user", "content": user_msg}]
+
+    stream_cb = state.get("stream_cb")
+
+    try:
+        msg = call_llm_with_tools(history, system, [CREATE_TASKS_TOOL])
+    except Exception as e:  # noqa: BLE001
+        logger.warning("task_input: tool pass failed (%s); using control-token fallback", e)
+        return _task_input_via_tokens(state)
+
+    tool_calls = getattr(msg, "tool_calls", None) or []
+
+    # No action yet — the model is proposing tasks / asking to confirm.
+    if not tool_calls:
+        response = (msg.content or "").strip()
+        if not response:
+            return _task_input_via_tokens(state)
+        if stream_cb:
+            stream_cb(response)
+        return {
+            "response": response,
+            "history": history + [{"role": "assistant", "content": response}],
+            "next_node": "end",
+        }
+
+    # The user confirmed — execute the structured task list, then narrate.
+    saved, titles = _execute_create_tasks(tool_calls, sqlite)
+    response = _narrate_saved_tasks(history, titles, saved, stream_cb)
+    return {
+        "response": response,
+        "history": history + [{"role": "assistant", "content": response}],
+        "next_node": "end",
+    }
+
+
+def _execute_create_tasks(tool_calls, sqlite) -> tuple[int, list[str]]:
+    """Validate + persist the tasks from one or more create_tasks tool calls."""
+    import json
+    saved = 0
+    titles: list[str] = []
+    for tc in tool_calls:
+        if getattr(tc.function, "name", "") != "create_tasks":
+            continue
+        try:
+            args = json.loads(tc.function.arguments or "{}")
+        except (ValueError, TypeError) as e:
+            logger.warning("create_tasks: bad arguments JSON: %s", e)
+            continue
+        # Reuse the existing validator as defense-in-depth, even on typed args.
+        result = parse_tasks(json.dumps(args.get("tasks", [])))
+        if not result.ok:
+            logger.warning("create_tasks: validation failed: %s", result.error)
+            continue
+        for td in result.value:
+            try:
+                task = _build_task(td)
+                # Dedup guard: skip if an identical, still-open task already
+                # exists that day (e.g. the user re-confirms an already-added task).
+                existing = sqlite.get_tasks_for_date(task.date_assigned)
+                already = any(
+                    e.title.strip().lower() == task.title.strip().lower()
+                    and getattr(e.status, "value", e.status) != "done"
+                    for e in existing
+                )
+                if already:
+                    logger.info("create_tasks: skipping duplicate %r on %s", task.title, task.date_assigned)
+                    titles.append(task.title)
+                    continue
+                sqlite.add_task(task)
+                saved += 1
+                titles.append(task.title)
+            except Exception as e:  # noqa: BLE001
+                logger.warning("create_tasks: could not save %r: %s", td, e)
+    return saved, titles
+
+
+def _narrate_saved_tasks(history, titles, saved, stream_cb) -> str:
+    """Stream a warm, in-character confirmation of the just-saved tasks."""
+    if saved == 0:
+        msg = "I had trouble saving those — could you list them again?"
+        if stream_cb:
+            stream_cb(msg)
+        return msg
+    titles_str = "; ".join(t for t in titles if t) or f"{saved} task(s)"
+    narrate_system = (
+        "You are Donna. You just saved these tasks to the user's list: "
+        f"{titles_str}. In 1-2 warm, concise sentences, confirm they're added and "
+        "optionally nudge the next step. Do not output JSON, code, or bullet lists."
+    )
+    return call_llm(history, narrate_system, on_delta=stream_cb)
+
+
+def _task_input_via_tokens(state: dict) -> dict:
+    """Original control-token path, retained as a fallback for the tool pass."""
     chroma = get_chroma(state)
     sqlite = get_sqlite(state)
     profile = chroma.get_profile()
@@ -368,7 +654,6 @@ def task_input(state: dict) -> dict:
 
     response = call_llm(history, system, on_delta=state.get("stream_cb"))
 
-    # A TASKS_CONFIRMED block is only present once the user has confirmed.
     block = extract_block(response, "TASKS_CONFIRMED")
     response_clean = strip_block(response, "TASKS_CONFIRMED")
 
@@ -407,6 +692,10 @@ def task_input(state: dict) -> dict:
 # ---------------------------------------------------------------------------
 
 def task_update(state: dict) -> dict:
+    """
+    Mark tasks done / move them via native tool-calling (decide -> narrate), with
+    a graceful fallback to the control-token path on any tool error.
+    """
     chroma = get_chroma(state)
     sqlite = get_sqlite(state)
     profile = chroma.get_profile()
@@ -415,7 +704,111 @@ def task_update(state: dict) -> dict:
     from agent.prompts import TASK_UPDATE_EXTRA
     system = build_system_prompt(profile, tasks, extra=TASK_UPDATE_EXTRA, memories=_recall_memories(state))
 
-    # Inject task IDs into system so LLM can reference them
+    # Give the model the task IDs it should reference in the tools.
+    task_id_context = "\n\nToday's tasks (use these IDs with the tools):\n" + "\n".join(
+        f"  ID {t.id}: {t.title} [{t.status.value}]" for t in tasks
+    )
+    system = system + task_id_context + (
+        "\n\nWhen the user reports finishing or wanting to move work, call "
+        "mark_tasks_done / move_tasks with the right IDs. If they're only asking "
+        "or nothing should change, just reply — don't call a tool."
+    )
+
+    history = state.get("history", [])
+    user_msg = state.get("user_message", "")
+    if user_msg:
+        history = history + [{"role": "user", "content": user_msg}]
+
+    stream_cb = state.get("stream_cb")
+
+    try:
+        msg = call_llm_with_tools(history, system, [MARK_DONE_TOOL, MOVE_TASK_TOOL])
+    except Exception as e:  # noqa: BLE001
+        logger.warning("task_update: tool pass failed (%s); using control-token fallback", e)
+        return _task_update_via_tokens(state)
+
+    tool_calls = getattr(msg, "tool_calls", None) or []
+
+    if not tool_calls:
+        response = (msg.content or "").strip()
+        if not response:
+            return _task_update_via_tokens(state)
+        if stream_cb:
+            stream_cb(response)
+        return {
+            "response": response,
+            "history": history + [{"role": "assistant", "content": response}],
+            "next_node": "end",
+        }
+
+    done, moved = _execute_task_updates(tool_calls, sqlite)
+    response = _narrate_task_update(history, done, moved, stream_cb)
+    return {
+        "response": response,
+        "history": history + [{"role": "assistant", "content": response}],
+        "next_node": "end",
+    }
+
+
+def _execute_task_updates(tool_calls, sqlite) -> tuple[int, int]:
+    """Apply mark_tasks_done / move_tasks tool calls. Returns (#done, #moved)."""
+    import json
+    done = moved = 0
+    for tc in tool_calls:
+        name = getattr(tc.function, "name", "")
+        try:
+            args = json.loads(tc.function.arguments or "{}")
+        except (ValueError, TypeError) as e:
+            logger.warning("task_update: bad arguments JSON: %s", e)
+            continue
+        if name == "mark_tasks_done":
+            for tid in args.get("task_ids", []):
+                try:
+                    sqlite.mark_done(int(tid))
+                    done += 1
+                except Exception as e:  # noqa: BLE001
+                    logger.warning("mark_done(%s) failed: %s", tid, e)
+        elif name == "move_tasks":
+            to_date = args.get("to_date") or tomorrow_str()
+            for tid in args.get("task_ids", []):
+                try:
+                    sqlite.move_task(int(tid), to_date)
+                    moved += 1
+                except Exception as e:  # noqa: BLE001
+                    logger.warning("move_task(%s) failed: %s", tid, e)
+    return done, moved
+
+
+def _narrate_task_update(history, done, moved, stream_cb) -> str:
+    """Stream a warm confirmation of what changed."""
+    if done == 0 and moved == 0:
+        msg = "I couldn't match that to a task — which one did you mean?"
+        if stream_cb:
+            stream_cb(msg)
+        return msg
+    parts = []
+    if done:
+        parts.append(f"marked {done} task(s) done")
+    if moved:
+        parts.append(f"moved {moved} task(s) to a later day")
+    narrate_system = (
+        "You are Donna. You just " + " and ".join(parts) + " for the user. In 1-2 "
+        "warm, concise sentences, confirm it and point them to what's next. No "
+        "JSON, code, or bullet lists."
+    )
+    return call_llm(history, narrate_system, on_delta=stream_cb)
+
+
+def _task_update_via_tokens(state: dict) -> dict:
+    """Original control-token path, retained as a fallback for the tool pass."""
+    chroma = get_chroma(state)
+    sqlite = get_sqlite(state)
+    profile = chroma.get_profile()
+    tasks = sqlite.get_tasks_for_date(today_str())
+
+    from agent.prompts import TASK_UPDATE_EXTRA
+    system = build_system_prompt(profile, tasks, extra=TASK_UPDATE_EXTRA, memories=_recall_memories(state))
+
     task_id_context = "\n\nTask IDs for today:\n" + "\n".join(
         f"  ID {t.id}: {t.title} [{t.status.value}]" for t in tasks
     )
@@ -431,7 +824,6 @@ def task_update(state: dict) -> dict:
 
     response = call_llm(history, system, on_delta=state.get("stream_cb"))
 
-    # Process any task mutations
     for task_id in find_ids(response, "MARK_DONE"):
         try:
             sqlite.mark_done(task_id)
@@ -444,7 +836,6 @@ def task_update(state: dict) -> dict:
         except Exception as e:
             logger.warning("task_update: move_task(%s) failed: %s", task_id, e)
 
-    # Strip control tokens from response
     response_clean = strip_block(strip_block(response, "MARK_DONE"), "MOVE_TASK")
 
     return {
@@ -514,6 +905,84 @@ def general_checkin(state: dict) -> dict:
 # ---------------------------------------------------------------------------
 
 def profile_update(state: dict) -> dict:
+    """
+    Save personal facts the user shares, via native tool-calling (decide ->
+    narrate). Falls back to the control-token path on any tool error.
+    """
+    chroma = get_chroma(state)
+    sqlite = get_sqlite(state)
+    profile = chroma.get_profile()
+    tasks = sqlite.get_tasks_for_date(today_str())
+
+    from agent.prompts import PROFILE_UPDATE_TOOL_EXTRA
+    system = build_system_prompt(profile, tasks, extra=PROFILE_UPDATE_TOOL_EXTRA)
+
+    history = state.get("history", [])
+    user_msg = state.get("user_message", "")
+    if user_msg:
+        history = history + [{"role": "user", "content": user_msg}]
+
+    stream_cb = state.get("stream_cb")
+
+    try:
+        msg = call_llm_with_tools(history, system, [UPDATE_PROFILE_TOOL])
+    except Exception as e:  # noqa: BLE001
+        logger.warning("profile_update: tool pass failed (%s); using control-token fallback", e)
+        return _profile_update_via_tokens(state)
+
+    tool_calls = getattr(msg, "tool_calls", None) or []
+
+    if not tool_calls:
+        response = (msg.content or "").strip()
+        if not response:
+            return _profile_update_via_tokens(state)
+        if stream_cb:
+            stream_cb(response)
+        return {
+            "response": response,
+            "history": history + [{"role": "assistant", "content": response}],
+            "next_node": "end",
+        }
+
+    fields = _execute_update_profile(tool_calls, chroma)
+    narrate_system = (
+        "You are Donna. You just noted these facts about the user: "
+        f"{', '.join(fields) if fields else 'their latest update'}. Acknowledge it "
+        "warmly in one sentence and continue naturally. No JSON, code, or lists."
+    )
+    response = call_llm(history, narrate_system, on_delta=stream_cb)
+    return {
+        "response": response,
+        "history": history + [{"role": "assistant", "content": response}],
+        "next_node": "end",
+    }
+
+
+def _execute_update_profile(tool_calls, chroma) -> list[str]:
+    """Apply update_profile tool calls. Returns the field names that were saved."""
+    import json
+    saved_fields: list[str] = []
+    for tc in tool_calls:
+        if getattr(tc.function, "name", "") != "update_profile":
+            continue
+        try:
+            args = json.loads(tc.function.arguments or "{}")
+        except (ValueError, TypeError) as e:
+            logger.warning("update_profile: bad arguments JSON: %s", e)
+            continue
+        fields = {k: v for k, v in args.items() if v not in (None, "", [], {})}
+        if not fields:
+            continue
+        try:
+            chroma.update_profile_fields(**fields)
+            saved_fields.extend(fields.keys())
+        except Exception as e:  # noqa: BLE001
+            logger.warning("update_profile: save failed: %s", e)
+    return saved_fields
+
+
+def _profile_update_via_tokens(state: dict) -> dict:
+    """Original control-token path, retained as a fallback for the tool pass."""
     chroma = get_chroma(state)
     sqlite = get_sqlite(state)
     profile = chroma.get_profile()
@@ -529,7 +998,6 @@ def profile_update(state: dict) -> dict:
 
     response = call_llm(history, system, on_delta=state.get("stream_cb"))
 
-    # Extract and apply profile updates
     block = extract_block(response, "PROFILE_UPDATE")
     response_clean = strip_block(response, "PROFILE_UPDATE")
 
@@ -561,6 +1029,119 @@ def profile_update(state: dict) -> dict:
 # ---------------------------------------------------------------------------
 
 def calendar(state: dict) -> dict:
+    """
+    Create timed events via native tool-calling (decide -> narrate), preserving the
+    conflict-detection layer and reminder rescheduling. Falls back to the
+    control-token path on any tool error.
+    """
+    chroma = get_chroma(state)
+    sqlite = get_sqlite(state)
+    profile = chroma.get_profile()
+    tasks = sqlite.get_tasks_for_date(today_str())
+    events = sqlite.get_events_for_date(today_str())
+
+    from agent.prompts import CALENDAR_TOOL_EXTRA
+    system = build_system_prompt(profile, tasks, extra=CALENDAR_TOOL_EXTRA, todays_events=events)
+
+    history = state.get("history", [])
+    user_msg = state.get("user_message", "")
+    if user_msg:
+        history = history + [{"role": "user", "content": user_msg}]
+
+    stream_cb = state.get("stream_cb")
+
+    try:
+        msg = call_llm_with_tools(history, system, [CREATE_EVENTS_TOOL])
+    except Exception as e:  # noqa: BLE001
+        logger.warning("calendar: tool pass failed (%s); using control-token fallback", e)
+        return _calendar_via_tokens(state)
+
+    tool_calls = getattr(msg, "tool_calls", None) or []
+
+    if not tool_calls:
+        response = (msg.content or "").strip()
+        if not response:
+            return _calendar_via_tokens(state)
+        if stream_cb:
+            stream_cb(response)
+        return {
+            "response": response,
+            "history": history + [{"role": "assistant", "content": response}],
+            "next_node": "end",
+        }
+
+    saved, titles, conflict_msgs = _execute_create_events(tool_calls, sqlite)
+    response = _narrate_saved_events(history, titles, saved, conflict_msgs, stream_cb)
+    return {
+        "response": response,
+        "history": history + [{"role": "assistant", "content": response}],
+        "next_node": "end",
+    }
+
+
+def _execute_create_events(tool_calls, sqlite) -> tuple[int, list[str], list[str]]:
+    """Validate + persist events, returning (#saved, titles, conflict warnings)."""
+    import json
+    saved = 0
+    titles: list[str] = []
+    conflict_msgs: list[str] = []
+    for tc in tool_calls:
+        if getattr(tc.function, "name", "") != "create_events":
+            continue
+        try:
+            args = json.loads(tc.function.arguments or "{}")
+        except (ValueError, TypeError) as e:
+            logger.warning("create_events: bad arguments JSON: %s", e)
+            continue
+        result = parse_events(json.dumps(args.get("events", [])))
+        if not result.ok:
+            logger.warning("create_events: validation failed: %s", result.error)
+            continue
+        for ev in build_events(result.value):
+            # Conflict-resolution layer: flag overlaps but still save, so the user
+            # can decide — silently dropping the write would be worse.
+            try:
+                overlaps = sqlite.conflicts_for_event(ev)
+                saved_ev = sqlite.add_event(ev)
+                saved += 1
+                titles.append(saved_ev.title)
+                if overlaps:
+                    names = ", ".join(f"'{o.title}' ({o.start_time})" for o in overlaps)
+                    conflict_msgs.append(
+                        f"Heads up: '{saved_ev.title}' at {saved_ev.start_time} "
+                        f"overlaps with {names}. Want me to move one?"
+                    )
+            except Exception as e:  # noqa: BLE001
+                logger.warning("create_events: could not save event: %s", e)
+    if saved:
+        _reschedule_reminders()
+    return saved, titles, conflict_msgs
+
+
+def _narrate_saved_events(history, titles, saved, conflict_msgs, stream_cb) -> str:
+    """Stream a warm confirmation, then append any conflict warnings verbatim."""
+    if saved == 0:
+        msg = "I had trouble adding those — could you restate the event?"
+        if stream_cb:
+            stream_cb(msg)
+        return msg
+    titles_str = "; ".join(t for t in titles if t) or f"{saved} event(s)"
+    narrate_system = (
+        "You are Donna. You just added these events to the user's calendar: "
+        f"{titles_str}. In 1-2 warm, concise sentences, confirm they're on the "
+        "calendar. Do not output JSON, code, or bullet lists."
+    )
+    text = call_llm(history, narrate_system, on_delta=stream_cb)
+    if conflict_msgs:
+        extra = "\n\n" + "\n".join(conflict_msgs)
+        if stream_cb:
+            stream_cb(extra)
+        text += extra
+    return text
+
+
+def _calendar_via_tokens(state: dict) -> dict:
+    """Original control-token path, retained as a fallback for the tool pass."""
     chroma = get_chroma(state)
     sqlite = get_sqlite(state)
     profile = chroma.get_profile()
@@ -592,10 +1173,6 @@ def calendar(state: dict) -> dict:
             saved = 0
             conflict_msgs: list[str] = []
             for ev in build_events(result.value):
-                # Conflict-resolution layer: check overlaps *before* saving so we
-                # can flag them to the user. We still save, then let the user
-                # decide to reschedule — silently dropping the write would be
-                # worse than a clear collision warning.
                 try:
                     overlaps = sqlite.conflicts_for_event(ev)
                     saved_ev = sqlite.add_event(ev)

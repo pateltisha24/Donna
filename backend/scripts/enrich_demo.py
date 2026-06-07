@@ -84,6 +84,12 @@ def enrich(weeks: int = 11, seed: int = 42) -> None:
     store = MongoStore(default_user=DEMO_USER)
     db = _get_db()
 
+    # The demo user has a profile but the chat path gates on this flag; without
+    # it every message is forced into onboarding. Ensure demo is "onboarded".
+    if not store.is_onboarding_complete():
+        store.complete_onboarding()
+        print("  · marked demo onboarding complete")
+
     today = date.today()
     window = weeks * 7
     start = (today - timedelta(days=window)).isoformat()

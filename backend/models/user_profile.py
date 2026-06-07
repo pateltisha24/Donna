@@ -75,6 +75,11 @@ class UserProfile:
 
     def to_prompt_str(self) -> str:
         """Human-readable summary for injection into the system prompt."""
+        # Join a list defensively: skip None/empty items and coerce to str, so a
+        # stray None in a profile list can never crash prompt-building.
+        def _join(items, sep=", "):
+            return sep.join(str(x).strip() for x in (items or []) if x and str(x).strip())
+
         lines = []
         if self.name:
             lines.append(f"Name: {self.name}")
@@ -82,24 +87,24 @@ class UserProfile:
             lines.append(f"Occupation: {self.occupation}")
         if self.institution:
             lines.append(f"Institution/Company: {self.institution}")
-        if self.major_goals_short:
-            lines.append(f"Short-term goals: {', '.join(self.major_goals_short)}")
-        if self.major_goals_long:
-            lines.append(f"Long-term goals: {', '.join(self.major_goals_long)}")
+        if _join(self.major_goals_short):
+            lines.append(f"Short-term goals: {_join(self.major_goals_short)}")
+        if _join(self.major_goals_long):
+            lines.append(f"Long-term goals: {_join(self.major_goals_long)}")
         if self.working_style:
             lines.append(f"Working style: {self.working_style}")
         if self.procrastination_patterns:
             lines.append(f"Procrastination patterns: {self.procrastination_patterns}")
         if self.weekly_schedule:
-            sched = "; ".join(f"{k}: {', '.join(v)}" for k, v in self.weekly_schedule.items())
+            sched = "; ".join(f"{k}: {_join(v)}" for k, v in self.weekly_schedule.items())
             lines.append(f"Weekly schedule: {sched}")
         if self.known_people:
-            people = ", ".join(f"{k} ({v})" for k, v in self.known_people.items())
+            people = ", ".join(f"{k} ({v})" for k, v in self.known_people.items() if k)
             lines.append(f"Known people: {people}")
-        if self.known_priorities:
-            lines.append(f"Known priorities: {', '.join(self.known_priorities)}")
-        if self.preferences:
-            lines.append(f"Preferences: {', '.join(self.preferences)}")
+        if _join(self.known_priorities):
+            lines.append(f"Known priorities: {_join(self.known_priorities)}")
+        if _join(self.preferences):
+            lines.append(f"Preferences: {_join(self.preferences)}")
         if self.notes:
-            lines.append(f"Notes: {' | '.join(self.notes[-5:])}")  # last 5 notes
+            lines.append(f"Notes: {_join(self.notes[-5:], ' | ')}")  # last 5 notes
         return "\n".join(lines) if lines else "No profile yet."
