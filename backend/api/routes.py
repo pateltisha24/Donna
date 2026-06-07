@@ -141,6 +141,11 @@ class SettingsUpdate(BaseModel):
     working_style: str | None = None
 
 
+class ForgetRequest(BaseModel):
+    field: str
+    value: str | None = None
+
+
 # ---------------------------------------------------------------------------
 # SSE helpers
 # ---------------------------------------------------------------------------
@@ -206,7 +211,11 @@ async def _run_and_stream(
         yield _sse({"chunk": tail})
     if not emitted["any"] and not tail:
         yield _sse({"chunk": result.get("response", "I'm not sure how to respond to that.")})
-    yield _sse({"done": True})
+    done_payload = {"done": True}
+    replan = result.get("replan")
+    if replan and replan.get("changes"):
+        done_payload["replan"] = replan  # UI renders a diff card + Undo button
+    yield _sse(done_payload)
 
 
 def _ensure_chat(store: MongoStore, session_id: str) -> str:
@@ -263,6 +272,42 @@ async def trigger(req: TriggerRequest, store: MongoStore = Depends(get_store)):
 # ---------------------------------------------------------------------------
 # Profile
 # ---------------------------------------------------------------------------
+
+@router.post("/replan/undo")
+async def replan_undo(store: MongoStore = Depends(get_store)):
+    """Revert the most recent emergency replan for this user."""
+    raw = store.get_state("last_replan")
+    if not raw:
+        raise HTTPException(status_code=404, detail="Nothing to undo")
+    from models.task import Priority
+    rec = json.loads(raw)
+    reverted = 0
+    for tid in rec.get("created_tasks", []):
+        try:
+            store.delete_task(int(tid)); reverted += 1
+        except Exception:
+            pass
+    for eid in rec.get("created_events", []):
+        try:
+            store.delete_event(int(eid)); reverted += 1
+        except Exception:
+            pass
+    for m in rec.get("moved", []):
+        try:
+            store.move_task(int(m["id"]), m["from"]); reverted += 1
+        except Exception:
+            pass
+    for r in rec.get("reprioritized", []):
+        try:
+            t = store.get_task(int(r["id"]))
+            if t:
+                t.priority = Priority(r["from"])
+                store.update_task(t); reverted += 1
+        except Exception:
+            pass
+    store.set_state("last_replan", "")  # consume the snapshot
+    return {"reverted": reverted}
+
 
 @router.get("/profile")
 async def get_profile(chroma: ChromaStore = Depends(get_profile_store)):
@@ -642,6 +687,16 @@ async def update_settings(
         except Exception as e:
             logger.warning("reschedule after settings update failed: %s", e)
     return {"status": "updated", "profile": profile.to_dict()}
+
+
+@router.post("/me/forget")
+async def forget_memory(
+    req: ForgetRequest,
+    chroma: ChromaStore = Depends(get_profile_store),
+):
+    """Remove one thing Donna remembers (a preference, person, goal, note, etc.)."""
+    profile = chroma.forget(req.field, req.value)
+    return {"status": "forgotten", "profile": profile.to_dict()}
 
 
 # ---------------------------------------------------------------------------

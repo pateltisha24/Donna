@@ -10,6 +10,7 @@ import {
   sendMessage,
   titleChatFromMessage,
   triggerEvent,
+  undoReplan,
   uploadCalendarFile,
   type Message,
 } from "@/lib/api";
@@ -109,6 +110,22 @@ export function ChatExperience() {
     });
   }, []);
 
+  const attachReplan = React.useCallback(
+    (idx: number, replan: NonNullable<Message["replan"]>) => {
+      setMessages((prev) => {
+        const updated = [...prev];
+        if (updated[idx]) updated[idx] = { ...updated[idx], replan };
+        return updated;
+      });
+    },
+    []
+  );
+
+  const handleUndoReplan = React.useCallback(async () => {
+    await undoReplan();
+    toast.success("Reverted — your day is back to how it was.");
+  }, []);
+
   /** Resolve a chat id, creating one if there isn't an active chat yet. */
   const ensureChat = React.useCallback(async (): Promise<string> => {
     if (chatId) return chatId;
@@ -158,10 +175,11 @@ export function ChatExperience() {
           trimmed,
           sessionId,
           (chunk) => appendChunk(chunk, donnaIdx),
-          () => {
+          (meta) => {
             setStreamingIndex(null);
             setWaitingFirstToken(false);
             setIsLoading(false);
+            if (meta?.replan) attachReplan(donnaIdx, meta.replan);
           },
           (msg) => {
             failed = true;
@@ -183,7 +201,7 @@ export function ChatExperience() {
       }
       if (failed) dropEmpty(donnaIdx);
     },
-    [isLoading, appendChunk, dropEmpty, ensureChat, maybeAutoTitle, refresh]
+    [isLoading, appendChunk, dropEmpty, ensureChat, maybeAutoTitle, refresh, attachReplan]
   );
 
   const handleSend = () => {
@@ -311,6 +329,7 @@ export function ChatExperience() {
                   key={idx}
                   message={msg}
                   isStreaming={idx === streamingIndex && !!msg.content}
+                  onUndoReplan={handleUndoReplan}
                 />
               ))}
               {waitingFirstToken && <ThinkingIndicator key="thinking" />}

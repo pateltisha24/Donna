@@ -80,6 +80,27 @@ class ProfileStore:
         self.save_profile(profile)
         return profile
 
+    def forget(self, field: str, value: str | None = None) -> UserProfile:
+        """
+        Remove something Donna remembers: an item from a list field, a key from a
+        dict field, or clear a scalar. Powers the user-facing "what Donna
+        remembers" controls (transparency + the right to be forgotten).
+        """
+        profile = self.get_profile()
+        if not hasattr(profile, field):
+            return profile
+        if field in _LIST_FIELDS:
+            setattr(profile, field, [x for x in getattr(profile, field) if x != value])
+        elif field in _DICT_FIELDS:
+            d = getattr(profile, field)
+            if isinstance(d, dict):
+                d.pop(value, None)
+            setattr(profile, field, d)
+        else:
+            setattr(profile, field, "")
+        self.save_profile(profile)
+        return profile
+
     def add_note(self, note: str) -> None:
         self.update_profile_fields(notes=[note])
 

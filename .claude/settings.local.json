@@ -81,7 +81,16 @@
       "Bash(python /tmp/diag.py)",
       "Bash(curl -s -X POST -H \"X-User-Id: demo\" -H \"Content-Type: application/json\" -d '{\"title\":\"diag\"}' http://localhost:8000/chats)",
       "Bash(python -m py_compile agent/nodes.py agent/prompts.py)",
-      "Bash(break)"
+      "Bash(break)",
+      "Bash(python /tmp/setup_replan.py)",
+      "Bash(curl -s -X POST -H \"X-User-Id: replantest\" -H \"Content-Type: application/json\" -d '{\"title\":\"r\"}' http://localhost:8000/chats)",
+      "Bash(curl -s -H \"X-User-Id: demo\" \"http://localhost:8000/tasks\")",
+      "Bash(python3 -c \"import sys,json;d=json.load\\(sys.stdin\\);print\\(' count',len\\(d\\)\\);[print\\('  -',t['title'],'|',t['priority']\\) for t in d]\")",
+      "Bash(python3 -c \"import sys,json;[print\\('  -',t['title'],'|',t['priority'],'|',t['status']\\) for t in json.load\\(sys.stdin\\)]\")",
+      "Bash(python3 -c \"import sys,json;d=json.load\\(sys.stdin\\);print\\(' count',len\\(d\\)\\);[print\\('  -',t['title']\\) for t in d]\")",
+      "Bash(curl -s -H \"X-User-Id: demo\" \"http://localhost:8000/search?q=recruiter\")",
+      "Bash(python3 -c \"import sys,json;[print\\('  -',t['title'],t['date_assigned']\\) for t in json.load\\(sys.stdin\\)]\")",
+      "Bash(python scripts/eval_agent.py)"
     ]
   }
 }

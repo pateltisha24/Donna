@@ -7,14 +7,22 @@ import remarkGfm from "remark-gfm";
 import { DonnaAvatar, UserAvatar } from "@/components/ui/avatar";
 import { cn } from "@/lib/utils";
 import type { Message } from "@/lib/api";
+import { ReplanCard } from "./ReplanCard";
 
 interface MessageBubbleProps {
   message: Message;
   isStreaming?: boolean;
+  onUndoReplan?: () => Promise<void>;
 }
 
-export function MessageBubble({ message, isStreaming = false }: MessageBubbleProps) {
+export function MessageBubble({ message, isStreaming = false, onUndoReplan }: MessageBubbleProps) {
   const isUser = message.role === "user";
+  const replan = message.replan;
+  // When a structured replan card is shown, drop the redundant text diff that
+  // Donna appended (kept in content so reloaded history still reads complete).
+  const displayContent = replan
+    ? message.content.split(/\n*\*\*Here's what I shifted:\*\*/)[0].trim()
+    : message.content;
 
   return (
     <motion.div
@@ -37,13 +45,20 @@ export function MessageBubble({ message, isStreaming = false }: MessageBubblePro
           <p className="whitespace-pre-wrap break-words">{message.content}</p>
         ) : (
           <div className="markdown break-words">
-            <ReactMarkdown remarkPlugins={[remarkGfm]}>{message.content}</ReactMarkdown>
+            <ReactMarkdown remarkPlugins={[remarkGfm]}>{displayContent}</ReactMarkdown>
           </div>
         )}
         {isStreaming && (
           <span
             className="inline-block w-1.5 h-4 ml-0.5 align-text-bottom rounded-sm bg-primary animate-pulse"
             aria-hidden
+          />
+        )}
+        {replan && replan.changes.length > 0 && (
+          <ReplanCard
+            changes={replan.changes}
+            canUndo={replan.undo}
+            onUndo={onUndoReplan ?? (async () => {})}
           />
         )}
       </div>

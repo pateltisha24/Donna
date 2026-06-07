@@ -230,6 +230,23 @@ CREATE_EVENTS_TOOL = {
 }
 
 
+REPRIORITIZE_TOOL = {
+    "type": "function",
+    "function": {
+        "name": "reprioritize_tasks",
+        "description": "Change the priority of one or more of today's tasks. Use the task IDs from the system context.",
+        "parameters": {
+            "type": "object",
+            "properties": {
+                "task_ids": {"type": "array", "items": {"type": "integer"}},
+                "priority": {"type": "string", "enum": ["high", "medium", "low"]},
+            },
+            "required": ["task_ids", "priority"],
+        },
+    },
+}
+
+
 UPDATE_PROFILE_TOOL = {
     "type": "function",
     "function": {
@@ -275,6 +292,39 @@ def get_sqlite(state: dict | None = None) -> MongoStore:
 
 def get_chroma(state: dict | None = None) -> ChromaStore:
     return ChromaStore(get_sqlite(state))
+
+
+def _day_alerts(sqlite) -> str:
+    """
+    Surface proactive warnings — double-booked events and an overloaded day — so
+    Donna can flag them unprompted in briefings and check-ins instead of waiting
+    to be asked. This is the "proactive assistant" behaviour.
+    """
+    alerts: list[str] = []
+    try:
+        for c in sqlite.find_event_conflicts(today_str()):
+            a, b = c["a"], c["b"]
+            alerts.append(f"'{a['title']}' ({a['start']}) overlaps '{b['title']}' ({b['start']})")
+    except Exception as e:  # noqa: BLE001
+        logger.debug("day_alerts conflicts skipped: %s", e)
+    try:
+        pending = [
+            t for t in sqlite.get_tasks_for_date(today_str())
+            if getattr(t.status, "value", t.status) != "done"
+        ]
+        total = sum((t.duration_estimate or 0) for t in pending)
+        if total >= 360:
+            alerts.append(
+                f"Heavy day: ~{round(total / 60)}h of work across {len(pending)} tasks still to do"
+            )
+    except Exception as e:  # noqa: BLE001
+        logger.debug("day_alerts load skipped: %s", e)
+    if not alerts:
+        return ""
+    return (
+        "\n\nPROACTIVE ALERTS — work these into your reply naturally if relevant "
+        "(don't just list them robotically):\n" + "\n".join(f"- {a}" for a in alerts)
+    )
 
 
 def _recall_memories(state: dict, k: int = 4) -> str:
@@ -506,6 +556,7 @@ def morning_briefing(state: dict) -> dict:
 
     from agent.prompts import MORNING_BRIEFING_EXTRA
     system = build_system_prompt(profile, tasks, extra=MORNING_BRIEFING_EXTRA, todays_events=events, memories=_recall_memories(state))
+    system += _day_alerts(sqlite)
 
     history = state.get("history", [])
     user_msg = state.get("user_message", "")
@@ -850,6 +901,172 @@ def _task_update_via_tokens(state: dict) -> dict:
 # ---------------------------------------------------------------------------
 
 def emergency_replan(state: dict) -> dict:
+    """
+    Actually replan the day: the model orchestrates real changes (add the urgent
+    item, reprioritize, move what won't fit) via tools, then Donna narrates a
+    decisive summary followed by a concrete diff of what changed. Falls back to a
+    descriptive-only reply if the tool pass errors.
+    """
+    chroma = get_chroma(state)
+    sqlite = get_sqlite(state)
+    profile = chroma.get_profile()
+    tasks = sqlite.get_tasks_for_date(today_str())
+    events = sqlite.get_events_for_date(today_str())
+
+    from agent.prompts import EMERGENCY_REPLAN_TOOL_EXTRA
+    system = build_system_prompt(
+        profile, tasks, extra=EMERGENCY_REPLAN_TOOL_EXTRA,
+        todays_events=events, memories=_recall_memories(state),
+    )
+    task_id_context = "\n\nToday's tasks (use these IDs with the tools):\n" + "\n".join(
+        f"  ID {t.id}: {t.title} [{t.priority.value}, {t.status.value}]" for t in tasks
+    )
+    system = system + task_id_context
+
+    history = state.get("history", [])
+    user_msg = state.get("user_message", "")
+    if user_msg:
+        history = history + [{"role": "user", "content": user_msg}]
+
+    stream_cb = state.get("stream_cb")
+    tools = [REPRIORITIZE_TOOL, MOVE_TASK_TOOL, CREATE_TASKS_TOOL, CREATE_EVENTS_TOOL]
+
+    try:
+        msg = call_llm_with_tools(history, system, tools, temperature=0.4)
+    except Exception as e:  # noqa: BLE001
+        logger.warning("emergency_replan: tool pass failed (%s); using text fallback", e)
+        return _emergency_replan_via_text(state)
+
+    tool_calls = getattr(msg, "tool_calls", None) or []
+
+    if not tool_calls:
+        # The model judged nothing needs moving (or is asking a question).
+        response = (msg.content or "").strip()
+        if not response:
+            return _emergency_replan_via_text(state)
+        if stream_cb:
+            stream_cb(response)
+        return {
+            "response": response,
+            "history": history + [{"role": "assistant", "content": response}],
+            "next_node": "end",
+        }
+
+    changes, undo_record = _execute_replan(tool_calls, sqlite)
+    if changes:
+        import json as _json
+        try:
+            sqlite.set_state("last_replan", _json.dumps(undo_record))
+        except Exception as e:  # noqa: BLE001
+            logger.warning("replan: could not store undo snapshot: %s", e)
+    response = _narrate_replan(history, changes, stream_cb)
+    return {
+        "response": response,
+        "history": history + [{"role": "assistant", "content": response}],
+        # Structured payload so the UI can render a diff card + an Undo button.
+        "replan": {"changes": changes, "undo": bool(changes)},
+        "next_node": "end",
+    }
+
+
+def _execute_replan(tool_calls, sqlite) -> tuple[list[str], dict]:
+    """
+    Apply the replan tool calls. Returns (human-readable changes, undo_record).
+    The undo_record captures the inverse of every change so /replan/undo can
+    restore the day exactly.
+    """
+    import json
+    from models.task import Priority
+    changes: list[str] = []
+    undo: dict = {"created_tasks": [], "created_events": [], "moved": [], "reprioritized": []}
+    touched_events = False
+    for tc in tool_calls:
+        name = getattr(tc.function, "name", "")
+        try:
+            args = json.loads(tc.function.arguments or "{}")
+        except (ValueError, TypeError) as e:
+            logger.warning("replan: bad arguments JSON: %s", e)
+            continue
+
+        if name == "reprioritize_tasks":
+            prio = (args.get("priority") or "high").lower()
+            for tid in args.get("task_ids", []):
+                try:
+                    t = sqlite.get_task(int(tid))
+                    if t and t.priority.value != prio:
+                        undo["reprioritized"].append({"id": t.id, "from": t.priority.value})
+                        t.priority = Priority(prio)
+                        sqlite.update_task(t)
+                        changes.append(f"Bumped '{t.title}' to {prio} priority")
+                except Exception as e:  # noqa: BLE001
+                    logger.warning("replan reprioritize(%s) failed: %s", tid, e)
+
+        elif name == "move_tasks":
+            to_date = args.get("to_date") or tomorrow_str()
+            when = "tomorrow" if to_date == tomorrow_str() else to_date
+            for tid in args.get("task_ids", []):
+                try:
+                    t = sqlite.get_task(int(tid))
+                    if t:
+                        undo["moved"].append({"id": t.id, "from": t.date_assigned})
+                    sqlite.move_task(int(tid), to_date)
+                    if t:
+                        changes.append(f"Moved '{t.title}' to {when}")
+                except Exception as e:  # noqa: BLE001
+                    logger.warning("replan move(%s) failed: %s", tid, e)
+
+        elif name == "create_tasks":
+            result = parse_tasks(json.dumps(args.get("tasks", [])))
+            if result.ok:
+                for td in result.value:
+                    try:
+                        saved = sqlite.add_task(_build_task(td))
+                        if getattr(saved, "id", None) is not None:
+                            undo["created_tasks"].append(saved.id)
+                        changes.append(f"Added task '{str(td.get('title','')).strip()}'")
+                    except Exception as e:  # noqa: BLE001
+                        logger.warning("replan add task failed: %s", e)
+
+        elif name == "create_events":
+            result = parse_events(json.dumps(args.get("events", [])))
+            if result.ok:
+                for ev in build_events(result.value):
+                    try:
+                        saved = sqlite.add_event(ev)
+                        touched_events = True
+                        if getattr(saved, "id", None) is not None:
+                            undo["created_events"].append(saved.id)
+                        changes.append(f"Added '{saved.title}' at {saved.start_time}")
+                    except Exception as e:  # noqa: BLE001
+                        logger.warning("replan add event failed: %s", e)
+
+    if touched_events:
+        _reschedule_reminders()
+    return changes, undo
+
+
+def _narrate_replan(history, changes, stream_cb) -> str:
+    """Stream a calm, decisive summary, then append the concrete diff."""
+    if not changes:
+        msg = "I looked at your day and nothing needs shifting yet — you're in good shape. What came up?"
+        if stream_cb:
+            stream_cb(msg)
+        return msg
+    diff = "\n".join(f"- {c}" for c in changes)
+    narrate_system = (
+        "You are Donna. You just replanned the user's day and made these changes:\n"
+        f"{diff}\n\nIn 1-2 calm, decisive sentences, tell them it's handled and what "
+        "to focus on right now. Do NOT re-list the changes — they'll be shown below."
+    )
+    text = call_llm(history, narrate_system, on_delta=stream_cb)
+    diff_block = "\n\n**Here's what I shifted:**\n" + diff
+    if stream_cb:
+        stream_cb(diff_block)
+    return text + diff_block
+
+
+def _emergency_replan_via_text(state: dict) -> dict:
+    """Original descriptive-only replan, retained as a fallback."""
     chroma = get_chroma(state)
     sqlite = get_sqlite(state)
     profile = chroma.get_profile()
@@ -885,6 +1102,7 @@ def general_checkin(state: dict) -> dict:
 
     from agent.prompts import GENERAL_CHECKIN_EXTRA
     system = build_system_prompt(profile, tasks, extra=GENERAL_CHECKIN_EXTRA, todays_events=events, memories=_recall_memories(state))
+    system += _day_alerts(sqlite)
 
     history = state.get("history", [])
     user_msg = state.get("user_message", "")

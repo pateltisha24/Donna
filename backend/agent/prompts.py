@@ -77,7 +77,10 @@ def build_system_prompt(
     todays_events: list = None,
     memories: str = "",
 ) -> str:
-    current_time = datetime.now().strftime("%A, %B %d %Y at %H:%M")
+    # Include the ISO date explicitly: the model fills date fields (date_assigned,
+    # event date) in YYYY-MM-DD, and asking it to convert from prose was causing
+    # "today" tasks to land on the wrong day.
+    current_time = datetime.now().strftime("%A, %B %d %Y (today is %Y-%m-%d) at %H:%M")
     base = BASE_SYSTEM.format(
         user_profile=profile.to_prompt_str(),
         todays_tasks=_fmt_tasks(todays_tasks),
@@ -178,6 +181,18 @@ EMERGENCY_REPLAN_EXTRA = """\
 CONTEXT: The user has an urgent situation. Assess the new task's urgency \
 vs. existing tasks. Give a quick replan — what to prioritize now and what \
 can shift. Be decisive and calm.\
+"""
+
+EMERGENCY_REPLAN_TOOL_EXTRA = """\
+CONTEXT: The user has an urgent situation and needs their day replanned. Don't \
+just describe a plan — ACTUALLY replan using the tools:
+- Add the new urgent task or event (create_tasks / create_events).
+- Bump what's now most important to high priority (reprioritize_tasks).
+- Move lower-priority tasks you can't realistically fit today to tomorrow \
+(move_tasks).
+Use the task IDs from the system context. Make real, sensible changes — be \
+decisive but don't over-move; keep what still fits. You may call several tools \
+at once.\
 """
 
 GENERAL_CHECKIN_EXTRA = """\

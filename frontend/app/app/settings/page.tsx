@@ -6,6 +6,7 @@ import { useSession, signOut } from "next-auth/react";
 import { toast } from "sonner";
 import {
   Bell,
+  Brain,
   ChevronLeft,
   Clock,
   LogOut,
@@ -13,12 +14,13 @@ import {
   Palette,
   Sparkles,
   User,
+  X,
 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { TopBar } from "@/components/app/TopBar";
-import { getMe, updateSettings, clearUserIdCache, type UserProfile } from "@/lib/api";
+import { getMe, updateSettings, forgetMemory, clearUserIdCache, type UserProfile } from "@/lib/api";
 
 export default function SettingsPage() {
   const router = useRouter();
@@ -74,6 +76,16 @@ export default function SettingsPage() {
       toast.error("Couldn't save settings.");
     } finally {
       setSaving(false);
+    }
+  };
+
+  const forget = async (field: string, value?: string) => {
+    const updated = await forgetMemory(field, value);
+    if (updated) {
+      setProfile(updated);
+      toast.success("Forgotten.");
+    } else {
+      toast.error("Couldn't update that.");
     }
   };
 
@@ -202,6 +214,62 @@ export default function SettingsPage() {
             </CardContent>
           </Card>
 
+          {/* What Donna remembers */}
+          <Card className="mb-5">
+            <CardHeader>
+              <CardTitle className="flex items-center gap-2">
+                <Brain className="h-4 w-4 text-primary" /> What Donna remembers
+              </CardTitle>
+              <CardDescription>
+                Everything Donna has learned about you. Remove anything you'd rather she forget.
+              </CardDescription>
+            </CardHeader>
+            <CardContent className="space-y-4">
+              <MemoryGroup
+                label="Preferences"
+                items={profile?.preferences ?? []}
+                onForget={(v) => forget("preferences", v)}
+              />
+              <MemoryGroup
+                label="Priorities"
+                items={profile?.known_priorities ?? []}
+                onForget={(v) => forget("known_priorities", v)}
+              />
+              <MemoryGroup
+                label="Short-term goals"
+                items={profile?.major_goals_short ?? []}
+                onForget={(v) => forget("major_goals_short", v)}
+              />
+              <MemoryGroup
+                label="Long-term goals"
+                items={profile?.major_goals_long ?? []}
+                onForget={(v) => forget("major_goals_long", v)}
+              />
+              <MemoryGroup
+                label="People"
+                items={Object.entries(profile?.known_people ?? {}).map(([k, v]) => `${k} (${v})`)}
+                forgetKeys={Object.keys(profile?.known_people ?? {})}
+                onForget={(v) => forget("known_people", v)}
+              />
+              <MemoryGroup
+                label="Notes"
+                items={profile?.notes ?? []}
+                onForget={(v) => forget("notes", v)}
+              />
+              {!profile ||
+              (!(profile.preferences?.length) &&
+                !(profile.known_priorities?.length) &&
+                !(profile.major_goals_short?.length) &&
+                !(profile.major_goals_long?.length) &&
+                !(profile.notes?.length) &&
+                !Object.keys(profile.known_people ?? {}).length) ? (
+                <p className="text-sm text-muted-foreground">
+                  Donna hasn't noted anything yet. As you chat, things you share will show up here.
+                </p>
+              ) : null}
+            </CardContent>
+          </Card>
+
           {/* Appearance */}
           <Card className="mb-5">
             <CardHeader>
@@ -278,6 +346,42 @@ function Field({ label, children }: { label: string; children: React.ReactNode }
         {label}
       </label>
       {children}
+    </div>
+  );
+}
+
+function MemoryGroup({
+  label,
+  items,
+  forgetKeys,
+  onForget,
+}: {
+  label: string;
+  items: string[];
+  forgetKeys?: string[];
+  onForget: (value: string) => void;
+}) {
+  if (!items.length) return null;
+  return (
+    <div className="space-y-1.5">
+      <p className="text-xs font-medium uppercase tracking-wider text-muted-foreground">{label}</p>
+      <div className="flex flex-wrap gap-1.5">
+        {items.map((item, i) => (
+          <span
+            key={i}
+            className="group inline-flex items-center gap-1 rounded-full border border-border bg-secondary/60 pl-2.5 pr-1 py-1 text-xs"
+          >
+            {item}
+            <button
+              onClick={() => onForget(forgetKeys ? forgetKeys[i] : item)}
+              aria-label={`Forget ${item}`}
+              className="rounded-full p-0.5 text-muted-foreground hover:text-destructive hover:bg-destructive/10 transition-colors"
+            >
+              <X className="h-3 w-3" />
+            </button>
+          </span>
+        ))}
+      </div>
     </div>
   );
 }

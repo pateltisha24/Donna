@@ -76,9 +76,19 @@ async function apiFetch(path: string, init: RequestInit = {}): Promise<Response>
   return fetch(`${API_URL}${path}`, { ...init, headers });
 }
 
+export interface ReplanData {
+  changes: string[];
+  undo: boolean;
+}
+
 export interface Message {
   role: "user" | "donna";
   content: string;
+  replan?: ReplanData;
+}
+
+export interface DoneMeta {
+  replan?: ReplanData;
 }
 
 export interface Task {
@@ -130,7 +140,7 @@ export interface Analytics {
 
 interface StreamHandlers {
   onChunk: (chunk: string) => void;
-  onDone: () => void;
+  onDone: (meta?: DoneMeta) => void;
   onError?: (message: string) => void;
 }
 
@@ -144,6 +154,7 @@ async function readSSE(res: Response, handlers: StreamHandlers): Promise<void> {
 
   const decoder = new TextDecoder();
   let buffer = "";
+  let doneMeta: DoneMeta = {};
 
   while (true) {
     const { done, value } = await reader.read();
@@ -164,14 +175,15 @@ async function readSSE(res: Response, handlers: StreamHandlers): Promise<void> {
         } else if (parsed.error) {
           handlers.onError?.(parsed.error);
         } else if (parsed.done) {
-          handlers.onDone();
+          if (parsed.replan) doneMeta = { replan: parsed.replan };
+          handlers.onDone(doneMeta);
         }
       } catch {
         // Ignore malformed SSE lines.
       }
     }
   }
-  handlers.onDone();
+  handlers.onDone(doneMeta);
 }
 
 /** Send a message to Donna and stream the response back. */
@@ -179,7 +191,7 @@ export async function sendMessage(
   message: string,
   sessionId: string,
   onChunk: (chunk: string) => void,
-  onDone: () => void,
+  onDone: (meta?: DoneMeta) => void,
   onError?: (message: string) => void
 ): Promise<void> {
   const res = await apiFetch(`/chat`, {
@@ -195,7 +207,7 @@ export async function triggerEvent(
   event: "morning_briefing" | "eod_wrap",
   sessionId: string,
   onChunk: (chunk: string) => void,
-  onDone: () => void,
+  onDone: (meta?: DoneMeta) => void,
   onError?: (message: string) => void
 ): Promise<void> {
   const res = await apiFetch(`/trigger`, {
@@ -204,6 +216,13 @@ export async function triggerEvent(
     body: JSON.stringify({ event, session_id: sessionId }),
   });
   await readSSE(res, { onChunk, onDone, onError });
+}
+
+/** Revert the most recent emergency replan. */
+export async function undoReplan(): Promise<{ reverted: number }> {
+  const res = await apiFetch(`/replan/undo`, { method: "POST" });
+  if (!res.ok) throw new Error(`Undo failed: ${res.status}`);
+  return res.json();
 }
 
 /** Search/filter tasks. */
@@ -429,11 +448,30 @@ export interface UserProfile {
   occupation: string;
   institution: string;
   working_style: string;
+  procrastination_patterns?: string;
   wake_time: string;
   eod_time: string;
   major_goals_short: string[];
   major_goals_long: string[];
   preferences: string[];
+  known_priorities?: string[];
+  known_people?: Record<string, string>;
+  notes?: string[];
+}
+
+/** Remove one thing Donna remembers (a preference, person, goal, note…). */
+export async function forgetMemory(
+  field: string,
+  value?: string
+): Promise<UserProfile | null> {
+  const res = await apiFetch(`/me/forget`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ field, value }),
+  });
+  if (!res.ok) return null;
+  const data = await res.json();
+  return (data.profile ?? null) as UserProfile | null;
 }
 
 export async function getMe(): Promise<{ user_id: string; profile: UserProfile }> {

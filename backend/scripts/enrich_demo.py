@@ -93,7 +93,7 @@ def enrich(weeks: int = 11, seed: int = 42) -> None:
     today = date.today()
     window = weeks * 7
     start = (today - timedelta(days=window)).isoformat()
-    end = (today - timedelta(days=1)).isoformat()
+    end = today.isoformat()  # inclusive of today so re-runs refresh today's tasks
 
     # Idempotency: clear only PAST-window non-recurring tasks (all seed-made).
     res = db["tasks"].delete_many({
@@ -145,6 +145,23 @@ def enrich(weeks: int = 11, seed: int = 42) -> None:
 
     print(f"  · inserted {made} historical tasks across {window} days "
           f"({start} → {end})")
+
+    # A realistic, actionable TODAY so the dashboard + replan look alive.
+    today_iso = today.isoformat()
+    today_tasks = [
+        ("Finish Donna Phase 2 writeup", Priority.HIGH, 60, "donna", TaskStatus.PENDING),
+        ("Review teammate's pull request", Priority.MEDIUM, 45, "donna", TaskStatus.PENDING),
+        ("Thesis: revise methods section", Priority.HIGH, 90, "thesis", TaskStatus.PENDING),
+        ("Reply to recruiter emails", Priority.LOW, 20, "admin", TaskStatus.PENDING),
+        ("Morning standup", Priority.MEDIUM, 15, "donna", TaskStatus.DONE),
+        ("Evening gym", Priority.LOW, 45, "workout", TaskStatus.PENDING),
+    ]
+    for title, prio, dur, tag, status in today_tasks:
+        store.add_task(Task(
+            title=title, date_assigned=today_iso, priority=prio,
+            status=status, duration_estimate=dur, tags=[tag],
+        ))
+    print(f"  · inserted {len(today_tasks)} tasks for today ({today_iso})")
 
     enrich_events(store, db, today)
 

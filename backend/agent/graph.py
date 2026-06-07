@@ -31,6 +31,7 @@ class DonnaState(TypedDict, total=False):
     # before nodes run — silently defaulting every chat to the "default" user.
     user_id: str
     session_id: str
+    replan: dict  # structured replan result (changes + undo flag) for the UI
 
 
 # ---------------------------------------------------------------------------
