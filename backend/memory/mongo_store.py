@@ -645,6 +645,15 @@ class MongoStore:
     def delete_event(self, event_id: int) -> None:
         self._col("events").delete_one({"user_id": self.user_id, "event_id": event_id})
 
+    def update_event(self, event: Event) -> Event:
+        update = _event_to_doc(event, self.user_id)
+        update["event_id"] = event.id
+        self._col("events").update_one(
+            {"user_id": self.user_id, "event_id": event.id},
+            {"$set": update},
+        )
+        return event
+
     def get_events_for_date(self, date_str: str) -> list[Event]:
         out: list[Event] = []
         for e in self.get_all_events():

@@ -90,7 +90,28 @@
       "Bash(python3 -c \"import sys,json;d=json.load\\(sys.stdin\\);print\\(' count',len\\(d\\)\\);[print\\('  -',t['title']\\) for t in d]\")",
       "Bash(curl -s -H \"X-User-Id: demo\" \"http://localhost:8000/search?q=recruiter\")",
       "Bash(python3 -c \"import sys,json;[print\\('  -',t['title'],t['date_assigned']\\) for t in json.load\\(sys.stdin\\)]\")",
-      "Bash(python scripts/eval_agent.py)"
+      "Bash(python scripts/eval_agent.py)",
+      "Bash(sed -n '40,120p')",
+      "Bash(sed -n '/CALENDAR_TOOL_EXTRA = /,/\"\"\"/p' agent/prompts.py)",
+      "Bash(curl -s -X POST -H 'X-User-Id: __TRACKED_VAR__' -H 'Content-Type: application/json' -d '{\"title\":\"a\"}' http://localhost:8000/chats)",
+      "Bash(curl -s -X POST -H 'X-User-Id: __TRACKED_VAR__' -H 'Content-Type: application/json' -d '{\"title\":\"b\"}' http://localhost:8000/chats)",
+      "Bash(curl -s -X PATCH -H 'X-User-Id: __TRACKED_VAR__' -H 'Content-Type: application/json' -d '{\"title\":\"TA Meeting \\(fixed\\)\",\"recurrence\":\"weekly\",\"recurrence_days\":[\"mon\"]}' http://localhost:8000/events/__TRACKED_VAR__)",
+      "Bash(curl -s -H 'X-User-Id: __TRACKED_VAR__' http://localhost:8000/chats)",
+      "Bash(python3 -c \"import sys,json;d=json.load\\(sys.stdin\\);print\\('messages:',[\\(m['role'],m['content'][:20]\\) for m in d.get\\('messages',[]\\)]\\)\")",
+      "Bash(curl -s -H \"X-User-Id: someone-else\" \"http://localhost:8000/chats\")",
+      "Bash(cd /Users/tisha/Projects/Donna/frontend *)",
+      "Bash(curl -s -H \"X-User-Id: demo\" http://localhost:8000/me)",
+      "Bash(python3 -c \"import sys,json;p=json.load\\(sys.stdin\\).get\\('profile',{}\\);print\\('name:',p.get\\('name'\\),'| occ:',p.get\\('occupation'\\)\\)\")",
+      "Bash(python3 -c \"import sys,json;s=json.load\\(sys.stdin\\)['summary'];print\\('streak',s['current_streak'],'completion',round\\(s['completion_rate']*100\\),'%'\\)\")",
+      "Bash(curl -s -H \"X-User-Id: demo\" \"http://localhost:8000/events?days=14\")",
+      "Bash(python3 -c \"import sys,json;print\\('events:',len\\(json.load\\(sys.stdin\\)\\)\\)\")",
+      "Bash(echo \"=== 5. Groq LLM liveness \\(1 cheap chat\\) ===\")",
+      "Bash(curl -s -X POST -H \"X-User-Id: demo\" -H \"Content-Type: application/json\" -d '{\"title\":\"qa\"}' http://localhost:8000/chats)",
+      "Bash(python3 -c \"import sys,json;p=json.load\\(sys.stdin\\).get\\('profile',{}\\);print\\('name:',p.get\\('name'\\),'occ:',p.get\\('occupation'\\)\\)\")",
+      "Bash(python3 -c \"import sys,json;s=json.load\\(sys.stdin\\)['summary'];print\\('streak',s['current_streak'],'compl',round\\(s['completion_rate']*100\\)\\)\")",
+      "Bash(awk '/^def calendar\\\\\\(state/{f=1} f&&/if not tool_calls:/{c=1} c{print NR\": \"$0} c&&/next_node\": \"end\",/{n++} c&&n==1&&/}/{exit}' agent/nodes.py)",
+      "Bash(sed -n '945,956p' agent/nodes.py)",
+      "Bash(sed -n '660,675p' api/routes.py)"
     ]
   }
 }

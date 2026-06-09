@@ -45,6 +45,7 @@ export function TodayView() {
   const [events, setEvents] = React.useState<CalEvent[]>([]);
   const [insights, setInsights] = React.useState<Insights | null>(null);
   const [loading, setLoading] = React.useState(true);
+  const [needsProfile, setNeedsProfile] = React.useState(false);
 
   React.useEffect(() => {
     let cancelled = false;
@@ -56,7 +57,12 @@ export function TodayView() {
       getInsights(77), // ~11 weeks for the momentum glance
     ]).then(([me, t, e, ins]) => {
       if (cancelled) return;
-      if (me.status === "fulfilled") setName(me.value.profile?.name || "");
+      if (me.status === "fulfilled") {
+        setName(me.value.profile?.name || "");
+        // Nudge first-time users to fill in basics so Donna stops assuming.
+        const p = me.value.profile;
+        setNeedsProfile(!(p?.occupation || "").trim() && !(p?.working_style || "").trim());
+      }
       if (t.status === "fulfilled") setTasks(t.value);
       if (e.status === "fulfilled") {
         setEvents(e.value.filter((ev) => ev.date === today));
@@ -101,6 +107,25 @@ export function TodayView() {
                 : "A clean slate. Tell Donna what's on your plate."}
             </p>
           </div>
+
+          {/* First-run nudge: a filled profile means Donna assumes less. */}
+          {!loading && needsProfile && (
+            <Link
+              href="/app/settings"
+              className="group mb-8 flex items-center gap-3 rounded-xl border border-primary/30 bg-primary/5 px-4 py-3 transition hover:bg-primary/10"
+            >
+              <div className="h-9 w-9 shrink-0 rounded-lg bg-primary/15 flex items-center justify-center">
+                <Sparkles className="h-4 w-4 text-primary" />
+              </div>
+              <div className="min-w-0">
+                <p className="text-sm font-medium">Finish setting up your profile</p>
+                <p className="text-xs text-muted-foreground">
+                  Tell Donna your role, hours, and how you work — so she plans for you instead of guessing.
+                </p>
+              </div>
+              <ArrowRight className="h-4 w-4 text-primary ml-auto shrink-0 transition group-hover:translate-x-0.5" />
+            </Link>
+          )}
 
           {/* At a glance */}
           <div className="grid grid-cols-3 gap-3 md:gap-4 mb-8">

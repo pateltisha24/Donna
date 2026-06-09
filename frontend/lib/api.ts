@@ -306,6 +306,19 @@ export async function deleteEvent(id: number): Promise<void> {
   await apiFetch(`/events/${id}`, { method: "DELETE" });
 }
 
+/** Edit an event (partial fields). */
+export async function updateEvent(
+  id: number,
+  patch: Partial<Omit<CalEvent, "id">>
+): Promise<void> {
+  const res = await apiFetch(`/events/${id}`, {
+    method: "PATCH",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(patch),
+  });
+  if (!res.ok) throw new Error(`Update failed: ${res.status}`);
+}
+
 /** URL to download all events as an .ics for Apple Calendar. */
 export function calendarIcsUrl(): string {
   return `${API_URL}/calendar.ics`;
@@ -346,8 +359,8 @@ export interface RecallResult {
 
 /** Semantic recall over indexed assistant messages (ChromaDB). */
 export async function recall(query: string, limit = 5): Promise<RecallResult[]> {
-  const res = await fetch(
-    `${API_URL}/recall?q=${encodeURIComponent(query)}&limit=${limit}`
+  const res = await apiFetch(
+    `/recall?q=${encodeURIComponent(query)}&limit=${limit}`
   );
   if (!res.ok) return [];
   const data = await res.json();
@@ -371,8 +384,10 @@ export async function getAgents(): Promise<AgentInfo[]> {
 
 /** Load persisted conversation history for a session. */
 export async function getHistory(sessionId: string): Promise<Message[]> {
-  const res = await fetch(
-    `${API_URL}/history?session_id=${encodeURIComponent(sessionId)}`
+  // MUST use apiFetch — /history is user-scoped, so without the X-User-Id header
+  // the backend can't confirm ownership and returns an empty conversation.
+  const res = await apiFetch(
+    `/history?session_id=${encodeURIComponent(sessionId)}`
   );
   if (!res.ok) throw new Error(`API error: ${res.status}`);
   const data = await res.json();

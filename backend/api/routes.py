@@ -139,6 +139,8 @@ class SettingsUpdate(BaseModel):
     wake_time: str | None = None
     eod_time: str | None = None
     working_style: str | None = None
+    occupation: str | None = None
+    institution: str | None = None
 
 
 class ForgetRequest(BaseModel):
@@ -418,6 +420,29 @@ async def delete_event(event_id: int, store: MongoStore = Depends(get_store)):
     store.delete_event(event_id)
     reschedule_event_reminders()
     return {"status": "deleted"}
+
+
+@router.patch("/events/{event_id}")
+async def update_event(event_id: int, payload: dict, store: MongoStore = Depends(get_store)):
+    """Edit an existing event (title, date, time, location, recurrence)."""
+    from scheduler.jobs import reschedule_event_reminders
+    from models.task import Recurrence
+    existing = store.get_event(event_id)
+    if not existing:
+        raise HTTPException(status_code=404, detail="Event not found")
+    for field in ("title", "date", "start_time", "end_time", "location", "description"):
+        if field in payload and payload[field] is not None:
+            setattr(existing, field, payload[field])
+    if payload.get("recurrence"):
+        try:
+            existing.recurrence = Recurrence(payload["recurrence"])
+        except ValueError:
+            pass
+    if isinstance(payload.get("recurrence_days"), list):
+        existing.recurrence_days = [str(d).lower()[:3] for d in payload["recurrence_days"]]
+    store.update_event(existing)
+    reschedule_event_reminders()
+    return _event_to_dict(existing)
 
 
 @router.get("/calendar.ics")

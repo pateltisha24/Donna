@@ -21,12 +21,10 @@ import { Composer } from "./Composer";
 import { ThinkingIndicator } from "./ThinkingIndicator";
 import { EmptyState } from "./EmptyState";
 import { type QuickAction } from "./QuickActions";
-import { RightPanel } from "./RightPanel";
 
 export function ChatExperience() {
   const router = useRouter();
   const params = useSearchParams();
-  const panel = params.get("panel");
   const action = params.get("action");
   const ask = params.get("ask");
   // Guards so a prefilled prompt / emergency only fires once, even under
@@ -43,8 +41,6 @@ export function ChatExperience() {
   const [isLoading, setIsLoading] = React.useState(false);
   const [streamingIndex, setStreamingIndex] = React.useState<number | null>(null);
   const [waitingFirstToken, setWaitingFirstToken] = React.useState(false);
-  const [panelOpen, setPanelOpen] = React.useState(false);
-  const [panelTab, setPanelTab] = React.useState<"schedule" | "tasks">("schedule");
 
   const scrollerRef = React.useRef<HTMLDivElement>(null);
   const bottomRef = React.useRef<HTMLDivElement>(null);
@@ -69,15 +65,6 @@ export function ChatExperience() {
       cancelled = true;
     };
   }, [chatId]);
-
-  // ---- Open panel from URL param -----------------------------------------
-  React.useEffect(() => {
-    if (panel === "schedule" || panel === "tasks") {
-      setPanelTab(panel);
-      setPanelOpen(true);
-      router.replace("/app/chat", { scroll: false });
-    }
-  }, [panel, router]);
 
   // ---- Auto-scroll on new content ----------------------------------------
   React.useEffect(() => {
@@ -309,11 +296,7 @@ export function ChatExperience() {
 
   return (
     <div className="flex flex-col h-full min-h-0">
-      <TopBar
-        onOpenPanel={() => setPanelOpen(true)}
-        onQuickAction={onQuick}
-        quickDisabled={isLoading}
-      />
+      <TopBar onQuickAction={onQuick} quickDisabled={isLoading} />
 
       <div
         ref={scrollerRef}
@@ -324,14 +307,19 @@ export function ChatExperience() {
             <EmptyState onPrompt={runSend} />
           ) : (
             <AnimatePresence initial={false}>
-              {messages.map((msg, idx) => (
-                <MessageBubble
-                  key={idx}
-                  message={msg}
-                  isStreaming={idx === streamingIndex && !!msg.content}
-                  onUndoReplan={handleUndoReplan}
-                />
-              ))}
+              {messages.map((msg, idx) =>
+                // Skip the empty Donna placeholder while waiting for the first
+                // token — the ThinkingIndicator stands in for it, so we never
+                // show an empty bubble next to the typing dots.
+                msg.role === "donna" && !msg.content && !msg.replan ? null : (
+                  <MessageBubble
+                    key={idx}
+                    message={msg}
+                    isStreaming={idx === streamingIndex && !!msg.content}
+                    onUndoReplan={handleUndoReplan}
+                  />
+                )
+              )}
               {waitingFirstToken && <ThinkingIndicator key="thinking" />}
             </AnimatePresence>
           )}
@@ -349,8 +337,6 @@ export function ChatExperience() {
           isLoading={isLoading}
         />
       </div>
-
-      <RightPanel open={panelOpen} onOpenChange={setPanelOpen} initialTab={panelTab} />
     </div>
   );
 }

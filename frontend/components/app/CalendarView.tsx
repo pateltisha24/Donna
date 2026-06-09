@@ -2,8 +2,9 @@
 
 import * as React from "react";
 import Link from "next/link";
-import { CalendarDays, ChevronLeft, ChevronRight, MapPin, Upload } from "lucide-react";
-import { getEvents, type CalEvent } from "@/lib/api";
+import { CalendarDays, ChevronLeft, ChevronRight, MapPin, Trash2, Upload, X } from "lucide-react";
+import { toast } from "sonner";
+import { getEvents, updateEvent, deleteEvent, type CalEvent } from "@/lib/api";
 import { TopBar } from "./TopBar";
 import { Button } from "@/components/ui/button";
 import { cn } from "@/lib/utils";
@@ -118,6 +119,8 @@ export function CalendarView() {
   const [weekStart, setWeekStart] = React.useState<Date>(() => startOfWeek(new Date()));
   const [events, setEvents] = React.useState<CalEvent[]>([]);
   const [loading, setLoading] = React.useState(true);
+  const [editing, setEditing] = React.useState<CalEvent | null>(null);
+  const [reloadKey, setReloadKey] = React.useState(0);
 
   React.useEffect(() => {
     let cancelled = false;
@@ -129,7 +132,9 @@ export function CalendarView() {
     return () => {
       cancelled = true;
     };
-  }, [weekStart]);
+  }, [weekStart, reloadKey]);
+
+  const reload = React.useCallback(() => setReloadKey((k) => k + 1), []);
 
   const days = React.useMemo(
     () =>
@@ -296,10 +301,12 @@ export function CalendarView() {
                         );
                         const widthPct = 100 / p.lanes;
                         return (
-                          <div
+                          <button
                             key={idx}
+                            onClick={() => setEditing(p.ev)}
                             className={cn(
-                              "absolute rounded-md border px-1.5 py-1 overflow-hidden text-[11px] leading-tight",
+                              "absolute rounded-md border px-1.5 py-1 overflow-hidden text-[11px] leading-tight text-left",
+                              "cursor-pointer hover:brightness-110 hover:ring-1 hover:ring-primary/50 transition",
                               toneFor(p.ev)
                             )}
                             style={{
@@ -308,7 +315,7 @@ export function CalendarView() {
                               left: `calc(${p.lane * widthPct}% + 2px)`,
                               width: `calc(${widthPct}% - 4px)`,
                             }}
-                            title={`${p.ev.title}${p.ev.location ? ` · ${p.ev.location}` : ""}`}
+                            title={`${p.ev.title}${p.ev.location ? ` · ${p.ev.location}` : ""} — click to edit`}
                           >
                             <div className="font-medium truncate">{p.ev.title}</div>
                             {height > 30 && (
@@ -322,7 +329,7 @@ export function CalendarView() {
                                 <MapPin className="h-2.5 w-2.5" /> {p.ev.location}
                               </div>
                             )}
-                          </div>
+                          </button>
                         );
                       })}
                     </div>
@@ -342,6 +349,174 @@ export function CalendarView() {
           )}
         </div>
       </div>
+
+      {editing && (
+        <EventEditor
+          event={editing}
+          onClose={() => setEditing(null)}
+          onSaved={() => {
+            setEditing(null);
+            reload();
+          }}
+        />
+      )}
+    </div>
+  );
+}
+
+const DAY_OPTS = [
+  { v: "sun", l: "S" }, { v: "mon", l: "M" }, { v: "tue", l: "T" },
+  { v: "wed", l: "W" }, { v: "thu", l: "T" }, { v: "fri", l: "F" }, { v: "sat", l: "S" },
+];
+
+function EventEditor({
+  event,
+  onClose,
+  onSaved,
+}: {
+  event: CalEvent;
+  onClose: () => void;
+  onSaved: () => void;
+}) {
+  const [title, setTitle] = React.useState(event.title);
+  const [date, setDate] = React.useState(event.date);
+  const [start, setStart] = React.useState(event.start_time || "09:00");
+  const [end, setEnd] = React.useState(event.end_time || "");
+  const [location, setLocation] = React.useState(event.location || "");
+  const [recurrence, setRecurrence] = React.useState(event.recurrence || "none");
+  const [days, setDays] = React.useState<string[]>(event.recurrence_days || []);
+  const [busy, setBusy] = React.useState(false);
+
+  const toggleDay = (d: string) =>
+    setDays((prev) => (prev.includes(d) ? prev.filter((x) => x !== d) : [...prev, d]));
+
+  const save = async () => {
+    setBusy(true);
+    try {
+      await updateEvent(event.id, {
+        title: title.trim() || event.title,
+        date,
+        start_time: start,
+        end_time: end || null,
+        location,
+        recurrence,
+        recurrence_days: recurrence === "weekly" ? days : [],
+      });
+      toast.success("Event updated.");
+      onSaved();
+    } catch {
+      toast.error("Couldn't update the event.");
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  const remove = async () => {
+    setBusy(true);
+    try {
+      await deleteEvent(event.id);
+      toast.success("Event deleted.");
+      onSaved();
+    } catch {
+      toast.error("Couldn't delete the event.");
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  return (
+    <div
+      className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 backdrop-blur-sm p-4"
+      onClick={onClose}
+    >
+      <div
+        className="w-full max-w-md rounded-xl border border-border bg-card shadow-elev-3 p-5"
+        onClick={(e) => e.stopPropagation()}
+      >
+        <div className="flex items-center justify-between mb-4">
+          <h2 className="text-base font-semibold tracking-tight">Edit event</h2>
+          <button onClick={onClose} className="text-muted-foreground hover:text-foreground" aria-label="Close">
+            <X className="h-4 w-4" />
+          </button>
+        </div>
+
+        <div className="space-y-3">
+          <Field label="Title">
+            <input
+              value={title}
+              onChange={(e) => setTitle(e.target.value)}
+              className="w-full h-9 px-3 rounded-md border border-input bg-background text-sm"
+            />
+          </Field>
+          <div className="grid grid-cols-3 gap-3">
+            <Field label="Date">
+              <input type="date" value={date} onChange={(e) => setDate(e.target.value)}
+                className="w-full h-9 px-2 rounded-md border border-input bg-background text-sm" />
+            </Field>
+            <Field label="Start">
+              <input type="time" value={start} onChange={(e) => setStart(e.target.value)}
+                className="w-full h-9 px-2 rounded-md border border-input bg-background text-sm" />
+            </Field>
+            <Field label="End">
+              <input type="time" value={end} onChange={(e) => setEnd(e.target.value)}
+                className="w-full h-9 px-2 rounded-md border border-input bg-background text-sm" />
+            </Field>
+          </div>
+          <Field label="Location">
+            <input value={location} onChange={(e) => setLocation(e.target.value)}
+              className="w-full h-9 px-3 rounded-md border border-input bg-background text-sm" />
+          </Field>
+          <Field label="Repeats">
+            <select value={recurrence} onChange={(e) => setRecurrence(e.target.value)}
+              className="w-full h-9 px-2 rounded-md border border-input bg-background text-sm">
+              <option value="none">Does not repeat</option>
+              <option value="daily">Daily</option>
+              <option value="weekdays">Weekdays (Mon–Fri)</option>
+              <option value="weekly">Weekly on…</option>
+            </select>
+          </Field>
+          {recurrence === "weekly" && (
+            <div className="flex gap-1.5">
+              {DAY_OPTS.map((d) => (
+                <button
+                  key={d.v}
+                  onClick={() => toggleDay(d.v)}
+                  className={cn(
+                    "h-8 w-8 rounded-full text-xs font-medium border transition",
+                    days.includes(d.v)
+                      ? "bg-primary text-primary-foreground border-primary"
+                      : "border-input text-muted-foreground hover:text-foreground"
+                  )}
+                >
+                  {d.l}
+                </button>
+              ))}
+            </div>
+          )}
+        </div>
+
+        <div className="flex items-center justify-between mt-5">
+          <Button variant="ghost" size="sm" onClick={remove} disabled={busy}
+            className="text-destructive hover:text-destructive">
+            <Trash2 className="h-4 w-4" /> Delete
+          </Button>
+          <div className="flex gap-2">
+            <Button variant="outline" size="sm" onClick={onClose} disabled={busy}>Cancel</Button>
+            <Button size="sm" onClick={save} disabled={busy}>{busy ? "Saving…" : "Save"}</Button>
+          </div>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+function Field({ label, children }: { label: string; children: React.ReactNode }) {
+  return (
+    <div className="space-y-1">
+      <label className="text-[11px] font-medium uppercase tracking-wider text-muted-foreground">
+        {label}
+      </label>
+      {children}
     </div>
   );
 }

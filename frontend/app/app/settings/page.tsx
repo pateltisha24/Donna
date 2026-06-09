@@ -32,6 +32,8 @@ export default function SettingsPage() {
 
   // local form state
   const [name, setName] = React.useState("");
+  const [occupation, setOccupation] = React.useState("");
+  const [institution, setInstitution] = React.useState("");
   const [workingStyle, setWorkingStyle] = React.useState("");
   const [wake, setWake] = React.useState("08:00");
   const [eod, setEod] = React.useState("21:00");
@@ -44,6 +46,8 @@ export default function SettingsPage() {
       .then(({ profile }) => {
         setProfile(profile);
         setName(profile.name || session?.user?.name || "");
+        setOccupation(profile.occupation || "");
+        setInstitution(profile.institution || "");
         setWorkingStyle(profile.working_style || "");
         setWake(profile.wake_time || "08:00");
         setEod(profile.eod_time || "21:00");
@@ -62,6 +66,8 @@ export default function SettingsPage() {
     try {
       const updated = await updateSettings({
         name: name.trim() || undefined,
+        occupation: occupation.trim() || undefined,
+        institution: institution.trim() || undefined,
         working_style: workingStyle.trim() || undefined,
         wake_time: wake,
         eod_time: eod,
@@ -150,6 +156,24 @@ export default function SettingsPage() {
                   disabled={loading}
                 />
               </Field>
+              <div className="grid grid-cols-2 gap-4">
+                <Field label="Role / occupation">
+                  <Input
+                    value={occupation}
+                    onChange={(e) => setOccupation(e.target.value)}
+                    placeholder="e.g. CS student, PM"
+                    disabled={loading}
+                  />
+                </Field>
+                <Field label="School / company">
+                  <Input
+                    value={institution}
+                    onChange={(e) => setInstitution(e.target.value)}
+                    placeholder="e.g. University at Buffalo"
+                    disabled={loading}
+                  />
+                </Field>
+              </div>
               <Field label="Email">
                 <div className="flex items-center gap-2 h-10 px-3 rounded-md border border-input bg-muted/30 text-sm text-muted-foreground">
                   <Mail className="h-3.5 w-3.5" />

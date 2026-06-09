@@ -38,9 +38,13 @@ Extract every event you can see. Respond with ONLY a JSON array, each item:
 }}
 
 Rules:
+- Map each event to the EXACT day column it sits under — read the column header
+  carefully and do not shift it by a day. Double-check Sunday vs Monday.
 - A weekly timetable of classes/shifts is recurring: set recurrence "weekly" and
-  recurrence_days to the weekday(s) the item appears under. Leave date null.
-- A one-off dated event: set recurrence "none" and fill date.
+  recurrence_days to ONLY the weekday(s) the item actually appears under. Leave
+  date null. Never add days the item is not shown on.
+- A one-off dated event: set recurrence "none". Prefer reporting the weekday in
+  recurrence_days over guessing a calendar date if you're unsure of the date.
 - If the same titled item appears on multiple weekdays, emit ONE item with all
   those days in recurrence_days.
 - Output ONLY the JSON array, no prose."""

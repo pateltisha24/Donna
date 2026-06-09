@@ -230,6 +230,26 @@ CREATE_EVENTS_TOOL = {
 }
 
 
+CANCEL_EVENTS_TOOL = {
+    "type": "function",
+    "function": {
+        "name": "cancel_events",
+        "description": (
+            "Cancel/delete one or more calendar events the user no longer wants. "
+            "Use the event IDs from the system context. Only call this once the "
+            "user has clearly asked to cancel or remove the event(s)."
+        ),
+        "parameters": {
+            "type": "object",
+            "properties": {
+                "event_ids": {"type": "array", "items": {"type": "integer"}},
+            },
+            "required": ["event_ids"],
+        },
+    },
+}
+
+
 REPRIORITIZE_TOOL = {
     "type": "function",
     "function": {
@@ -1257,9 +1277,17 @@ def calendar(state: dict) -> dict:
     profile = chroma.get_profile()
     tasks = sqlite.get_tasks_for_date(today_str())
     events = sqlite.get_events_for_date(today_str())
+    upcoming = sqlite.get_upcoming_events(days=14)
 
     from agent.prompts import CALENDAR_TOOL_EXTRA
     system = build_system_prompt(profile, tasks, extra=CALENDAR_TOOL_EXTRA, todays_events=events)
+    # Give the model event IDs so it can cancel the right one on request.
+    id_lines = "\n".join(
+        f"  ID {e.id}: {e.title} on {e.date} at {e.start_time}"
+        for e in upcoming if getattr(e, "id", None) is not None
+    )
+    if id_lines:
+        system = system + "\n\nUpcoming event IDs (use these to cancel):\n" + id_lines
 
     history = state.get("history", [])
     user_msg = state.get("user_message", "")
@@ -1269,7 +1297,7 @@ def calendar(state: dict) -> dict:
     stream_cb = state.get("stream_cb")
 
     try:
-        msg = call_llm_with_tools(history, system, [CREATE_EVENTS_TOOL])
+        msg = call_llm_with_tools(history, system, [CREATE_EVENTS_TOOL, CANCEL_EVENTS_TOOL])
     except Exception as e:  # noqa: BLE001
         logger.warning("calendar: tool pass failed (%s); using control-token fallback", e)
         return _calendar_via_tokens(state)
@@ -1277,6 +1305,25 @@ def calendar(state: dict) -> dict:
     tool_calls = getattr(msg, "tool_calls", None) or []
 
     if not tool_calls:
+        # Deterministic safety net for cancellation: the weaker model sometimes
+        # replies instead of calling cancel_events. If the user clearly wants to
+        # cancel and exactly one upcoming event matches, cancel it ourselves so
+        # the action is reliable rather than model-dependent.
+        umsg = (user_msg or "").lower()
+        if any(k in umsg for k in ("cancel", "remove", "delete", "drop", "call off")):
+            matches = [
+                e for e in upcoming
+                if getattr(e, "id", None) is not None and _event_matches_phrase(e.title, umsg)
+            ]
+            if len(matches) == 1:
+                cancelled = _cancel_event_ids([matches[0].id], sqlite)
+                response = _narrate_calendar_actions(history, [], 0, [], cancelled, stream_cb)
+                return {
+                    "response": response,
+                    "history": history + [{"role": "assistant", "content": response}],
+                    "next_node": "end",
+                }
+
         response = (msg.content or "").strip()
         if not response:
             return _calendar_via_tokens(state)
@@ -1288,13 +1335,95 @@ def calendar(state: dict) -> dict:
             "next_node": "end",
         }
 
-    saved, titles, conflict_msgs = _execute_create_events(tool_calls, sqlite)
-    response = _narrate_saved_events(history, titles, saved, conflict_msgs, stream_cb)
+    create_calls = [tc for tc in tool_calls if getattr(tc.function, "name", "") == "create_events"]
+    cancel_calls = [tc for tc in tool_calls if getattr(tc.function, "name", "") == "cancel_events"]
+    saved, titles, conflict_msgs = (
+        _execute_create_events(create_calls, sqlite) if create_calls else (0, [], [])
+    )
+    cancelled = _execute_cancel_events(cancel_calls, sqlite) if cancel_calls else []
+    # Backstop: the user clearly meant to cancel but nothing was removed (the model
+    # called the wrong tool or a non-existent id). Try a deterministic single match.
+    umsg = (user_msg or "").lower()
+    if not cancelled and any(k in umsg for k in ("cancel", "remove", "delete", "drop", "call off")):
+        current = sqlite.get_upcoming_events(days=14)
+        m = [e for e in current if getattr(e, "id", None) is not None and _event_matches_phrase(e.title, umsg)]
+        if len(m) == 1:
+            cancelled = _cancel_event_ids([m[0].id], sqlite)
+    response = _narrate_calendar_actions(history, titles, saved, conflict_msgs, cancelled, stream_cb)
     return {
         "response": response,
         "history": history + [{"role": "assistant", "content": response}],
         "next_node": "end",
     }
+
+
+def _event_matches_phrase(title: str, msg: str) -> bool:
+    """True if the lowercased user message clearly refers to this event title."""
+    import re
+    t = (title or "").lower().strip()
+    if t and t in msg:
+        return True
+    tokens = [w for w in re.findall(r"[a-z0-9]+", t) if len(w) >= 4]
+    return any(w in msg for w in tokens)
+
+
+def _cancel_event_ids(event_ids, sqlite) -> list[str]:
+    """Delete events by id; returns the titles that were cancelled."""
+    cancelled: list[str] = []
+    touched = False
+    for eid in event_ids:
+        try:
+            ev = sqlite.get_event(int(eid))
+            sqlite.delete_event(int(eid))
+            touched = True
+            cancelled.append(ev.title if ev else f"event {eid}")
+        except Exception as e:  # noqa: BLE001
+            logger.warning("cancel: could not delete %s: %s", eid, e)
+    if touched:
+        _reschedule_reminders()
+    return cancelled
+
+
+def _execute_cancel_events(tool_calls, sqlite) -> list[str]:
+    """Delete the requested events; returns the titles that were cancelled."""
+    import json
+    ids: list = []
+    for tc in tool_calls:
+        if getattr(tc.function, "name", "") != "cancel_events":
+            continue
+        try:
+            args = json.loads(tc.function.arguments or "{}")
+        except (ValueError, TypeError) as e:
+            logger.warning("cancel_events: bad arguments JSON: %s", e)
+            continue
+        ids.extend(args.get("event_ids", []))
+    return _cancel_event_ids(ids, sqlite)
+
+
+def _narrate_calendar_actions(history, titles, saved, conflict_msgs, cancelled, stream_cb) -> str:
+    """Confirm whatever calendar changes were just made (adds and/or cancels)."""
+    did: list[str] = []
+    if saved:
+        did.append("added " + "; ".join(t for t in titles if t))
+    if cancelled:
+        did.append("cancelled " + "; ".join(cancelled))
+    if not did:
+        msg = "I couldn't make that calendar change — could you restate it?"
+        if stream_cb:
+            stream_cb(msg)
+        return msg
+    narrate_system = (
+        "You are Donna. You just updated the user's calendar — " + "; ".join(did) +
+        ". In 1-2 warm, concise sentences, confirm the change(s). Do not output "
+        "JSON, code, or bullet lists."
+    )
+    text = call_llm(history, narrate_system, on_delta=stream_cb)
+    if conflict_msgs:
+        extra = "\n\n" + "\n".join(conflict_msgs)
+        if stream_cb:
+            stream_cb(extra)
+        text += extra
+    return text
 
 
 def _execute_create_events(tool_calls, sqlite) -> tuple[int, list[str], list[str]]:
